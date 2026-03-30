@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>WMS 仓库管理系统 - 登录</title>
+    <!-- 引入 Vue3 和 Element Plus -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- Axios -->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <!-- Element Plus Icons -->
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <style>
+        body { margin: 0; background-color: #f2f3f5; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+        .login-box { width: 400px; padding: 40px; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .title { text-align: center; margin-bottom: 30px; font-size: 24px; color: #333; }
+        .toggle-btn { text-align: right; margin-top: 10px; font-size: 14px; color: #409eff; cursor: pointer; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="login-box">
+        <div class="title">{{ isLogin ? 'WMS 仓库管理系统登录' : '用户注册' }}</div>
+        
+        <el-form :model="form" label-width="0">
+            <el-form-item>
+                <el-input v-model="form.username" placeholder="请输入用户名">
+                    <template #prefix><el-icon><ep-user /></el-icon></template>
+                </el-input>
+            </el-form-item>
+            <el-form-item>
+                <el-input type="password" v-model="form.password" placeholder="请输入密码" show-password>
+                    <template #prefix><el-icon><ep-lock /></el-icon></template>
+                </el-input>
+            </el-form-item>
+            
+            <el-button type="primary" style="width: 100%; margin-top: 15px;" @click="submitStr" :loading="loading">
+                {{ isLogin ? '登 录' : '注 册' }}
+            </el-button>
+            <div class="toggle-btn" @click="isLogin = !isLogin; form.username=''; form.password=''">
+                {{ isLogin ? '没有账号？点击注册' : '已有账号？返回登录' }}
+            </div>
+        </el-form>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, reactive } = Vue;
+    const { ElMessage } = ElementPlus;
+
+    const app = createApp({
+        setup() {
+            const isLogin = ref(true);
+            const loading = ref(false);
+            const form = reactive({
+                username: '',
+                password: ''
+            });
+
+            const submitStr = () => {
+                if (!form.username || !form.password) {
+                    ElMessage.warning('用户名和密码不能为空');
+                    return;
+                }
+                loading.value = true;
+                const url = isLogin.value ? '/api/user/login' : '/api/user/register';
+                axios.post(url, form).then(res => {
+                    const data = res.data;
+                    if (data.code === 200) {
+                        ElMessage.success(isLogin.value ? '登录成功！(此为演示效果)' : '注册成功，请等待管理员审核！');
+                        if (isLogin.value) {
+                            ElMessage.success('登录成功！即将跳转...');
+                            // 存储用户信息并跳转到主页
+                            localStorage.setItem('wms_user', JSON.stringify(data.data));
+                            setTimeout(() => {
+                                window.location.href = '/main';
+                            }, 1000);
+                        } else {
+                            isLogin.value = true; // 注册后切回登录
+                        }
+                    } else {
+                        ElMessage.error(data.msg);
+                    }
+                }).catch(err => {
+                    ElMessage.error('服务器请求失败，请检查后端是否正常启动。');
+                }).finally(() => {
+                    loading.value = false;
+                });
+            }
+
+            return { isLogin, form, submitStr, loading }
+        }
+    });
+    // 注册图标组件
+    for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+        app.component('ep-' + key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase(), component);
+    }
+    app.use(ElementPlus);
+    app.mount('#app');
+</script>
+</body>
+</html>

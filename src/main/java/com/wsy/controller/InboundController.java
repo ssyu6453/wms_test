@@ -1,0 +1,119 @@
+package com.wsy.controller;
+
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.wsy.common.AuthSupport;
+import com.wsy.common.Result;
+import com.wsy.entity.Inbound;
+import com.wsy.entity.Inventory;
+import com.wsy.entity.User;
+import com.wsy.mapper.InboundMapper;
+import com.wsy.mapper.InventoryMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.*;
+
+@RestController
+@RequestMapping("/api/inbound")
+public class InboundController {
+
+    @Autowired
+    private InboundMapper inboundMapper;
+
+    @Autowired
+    private InventoryMapper inventoryMapper;
+
+    @Autowired
+    private AuthSupport authSupport;
+
+    @GetMapping("/list")
+    public Result<?> list(HttpServletRequest request) {
+        authSupport.requireLogin(request);
+        QueryWrapper<Inbound> wrapper = new QueryWrapper<>();
+        wrapper.orderByDesc("inbound_date").orderByDesc("id");
+        List<Inbound> list = inboundMapper.selectList(wrapper);
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        BigDecimal totalInboundAmount = BigDecimal.ZERO;
+
+        for (Inbound inbound : list) {
+            Inventory inventory = inventoryMapper.selectById(inbound.getInventoryId());
+
+            String productName = inventory != null ? inventory.getProductName() : inbound.getProductName();
+            BigDecimal price = inventory != null ? safe(inventory.getPrice()) : safe(inbound.getPrice());
+            String specification = inventory != null ? inventory.getSpecification() : inbound.getSpecification();
+            String supplier = inventory != null ? inventory.getSupplier() : inbound.getSupplier();
+            String unit = inventory != null ? inventory.getUnit() : inbound.getUnit();
+            int initStockQty = inventory != null ? defaultInt(inventory.getInitStockQty()) : defaultInt(inbound.getInitStockQty());
+
+            if (productName == null || productName.isBlank()) {
+                continue;
+            }
+            totalInboundAmount = totalInboundAmount.add(safe(inbound.getInboundAmount()));
+
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", inbound.getId());
+            row.put("inboundDate", inbound.getInboundDate());
+            row.put("productName", productName);
+            row.put("price", price);
+            row.put("specification", specification);
+            row.put("supplier", supplier);
+            row.put("unit", unit);
+            row.put("initStockQty", initStockQty);
+            row.put("certNo", inbound.getCertNo());
+            row.put("inboundQty", defaultInt(inbound.getInboundQty()));
+            row.put("inboundAmount", safe(inbound.getInboundAmount()));
+            row.put("productionDate", inbound.getProductionDate());
+            row.put("validDate", inbound.getValidDate());
+            row.put("remark", inbound.getRemark());
+            rows.add(row);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("list", rows);
+        result.put("totalInboundAmount", totalInboundAmount.setScale(2, RoundingMode.HALF_UP));
+        return Result.success(result);
+    }
+
+    @PostMapping("/add")
+    public Result<?> add(HttpServletRequest request, @RequestBody Inbound inbound) {
+        User user = authSupport.requireRole(request, 1);
+
+        if (inbound.getInventoryId() == null || inbound.getInboundQty() == null || inbound.getInboundQty() <= 0 || inbound.getInboundDate() == null) {
+            return Result.error("请填写完整的入库信息");
+        }
+
+        Inventory inventory = inventoryMapper.selectById(inbound.getInventoryId());
+        if (inventory == null) {
+            return Result.error("关联库存物品不存在");
+        }
+
+        BigDecimal inboundAmount = safe(inventory.getPrice()).multiply(BigDecimal.valueOf(inbound.getInboundQty())).setScale(2, RoundingMode.HALF_UP);
+        inbound.setInboundAmount(inboundAmount);
+        inbound.setOperator(user.getUsername());
+        inbound.setProductName(inventory.getProductName());
+        inbound.setPrice(safe(inventory.getPrice()));
+        inbound.setSpecification(inventory.getSpecification());
+        inbound.setSupplier(inventory.getSupplier());
+        inbound.setUnit(inventory.getUnit());
+        inbound.setInitStockQty(defaultInt(inventory.getInitStockQty()));
+        inboundMapper.insert(inbound);
+
+        int currentQty = defaultInt(inventory.getCurrentStockQty()) + inbound.getInboundQty();
+        inventory.setCurrentStockQty(currentQty);
+        inventoryMapper.updateById(inventory);
+
+        return Result.success("入库成功");
+    }
+
+    private BigDecimal safe(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private int defaultInt(Integer value) {
+        return value == null ? 0 : value;
+    }
+}

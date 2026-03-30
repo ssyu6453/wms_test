@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>WMS 仓库管理系统 - 控制台</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+    <script src="https://unpkg.com/element-plus"></script>
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: "Microsoft YaHei", sans-serif; background-color: #f0f2f5; }
+        #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden;}
+        .header { height: 60px; background-color: #2b3643; color: white; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 10;}
+        .header-title { font-size: 20px; font-weight: bold; display: flex; align-items: center;}
+        .header-user { display: flex; align-items: center; cursor: pointer; color: #fff;}
+        .main-container { flex: 1; display: flex; overflow: hidden; }
+        .aside { width: 220px; background-color: #304156; transition: width 0.3s; overflow-y: auto;}
+        .el-menu { border-right: none; }
+        .el-menu-item.is-active { background-color: #1890ff !important; color: white !important; }
+        .el-menu-item { color: #bfcbd9; }
+        .el-menu-item:hover { background-color: #263445; }
+        .content-box { flex: 1; padding: 20px; overflow-y: auto; background-color: #f0f2f5;}
+        .alert-card { margin-bottom: 20px; text-align: center; }
+        .alert-number { font-size: 36px; font-weight: bold; margin-top: 10px; }
+        .red-text { color: #F56C6C; }
+        .orange-text { color: #E6A23C; }
+        .box-card { margin-bottom: 20px; }
+        .toolbar { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <header class="header">
+        <div class="header-title">
+            <el-icon style="margin-right: 10px;"><ep-menu /></el-icon> WMS 仓库管理系统
+        </div>
+        <div class="header-user">
+            <el-dropdown @command="handleCommand">
+                <span class="el-dropdown-link" style="color: white;">
+                    {{ currentUser.username || '未登录' }} - {{ roleMap[currentUser.roleType] || '游客' }}
+                    <el-icon class="el-icon--right"><ep-arrow-down /></el-icon>
+                </span>
+                <template #dropdown>
+                    <el-dropdown-menu>
+                        <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <aside class="aside">
+            <el-menu :default-active="activeMenu" background-color="#304156" text-color="#bfcbd9" active-text-color="#409EFF" @select="handleMenuSelect">
+                <el-menu-item index="Dashboard"><el-icon><ep-data-board /></el-icon><template #title>系统首页与预警</template></el-menu-item>
+                <el-menu-item index="BasicInfo"><el-icon><ep-tickets /></el-icon><template #title>基础信息表</template></el-menu-item>
+                <el-menu-item index="Inbound"><el-icon><ep-download /></el-icon><template #title>入库明细表</template></el-menu-item>
+                <el-menu-item index="Outbound"><el-icon><ep-upload /></el-icon><template #title>出库明细表</template></el-menu-item>
+                <el-menu-item index="Inventory"><el-icon><ep-box /></el-icon><template #title>库存明细表</template></el-menu-item>
+                <el-menu-item index="Overview"><el-icon><ep-pie-chart /></el-icon><template #title>出入库总览表</template></el-menu-item>
+                <el-menu-item index="UserManager" v-if="currentUser.roleType === 2"><el-icon><ep-user-filled /></el-icon><template #title>用户权限审核</template></el-menu-item>
+            </el-menu>
+        </aside>
+
+        <main class="content-box">
+            
+            <!-- 1. 首页与预警面板 -->
+            <div v-show="activeMenu === 'Dashboard'">
+                <el-row :gutter="20">
+                    <el-col :span="8">
+                        <el-card class="alert-card" shadow="hover">
+                            <template #header><div class="clearfix"><span><el-icon color="#E6A23C"><ep-warning /></el-icon> 库存小于5的货物</span></div></template>
+                            <div class="alert-number orange-text">{{ alertTotal.lessThanFiveCount || 0 }} 种</div>
+                        </el-card>
+                    </el-col>
+                    <el-col :span="8">
+                        <el-card class="alert-card" shadow="hover">
+                            <template #header><div class="clearfix"><span><el-icon color="#F56C6C"><ep-circle-close /></el-icon> 库存恰好为0的货物</span></div></template>
+                            <div class="alert-number red-text">{{ alertTotal.equalsZeroCount || 0 }} 种</div>
+                        </el-card>
+                    </el-col>
+                    <el-col :span="8">
+                        <el-card class="alert-card" shadow="hover">
+                            <template #header><div class="clearfix"><span><el-icon color="#909399"><ep-remove /></el-icon> 小于0的异常负库存货物</span></div></template>
+                            <div class="alert-number" style="color: #909399;">{{ alertTotal.lessThanZeroCount || 0 }} 种</div>
+                        </el-card>
+                    </el-col>
+                </el-row>
+                <el-card class="box-card" style="margin-top:20px;">
+                    <template #header>需要预警的详细清单 (当前为演示假数据)</template>
+                    <el-table :data="alertData" style="width: 100%" border stripe>
+                        <el-table-column prop="product_name" label="品名" width="180"></el-table-column>
+                        <el-table-column prop="specification" label="规格型号"></el-table-column>
+                        <el-table-column prop="current_stock_qty" label="现有库存">
+                            <template #default="{ row }">
+                                <el-tag :type="row.current_stock_qty <= 0 ? 'danger' : 'warning'">{{ row.current_stock_qty }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="supplier" label="供应商"></el-table-column>
+                        <el-table-column prop="safe_stock_qty" label="安全库存"></el-table-column>
+                    </el-table>
+                </el-card>
+            </div>
+
+            <!-- 基础信息表板块 -->
+            <div v-show="activeMenu === 'BasicInfo'">
+                <el-card class="box-card">
+                    <div class="toolbar">
+                        <el-form :inline="true" size="small">
+                            <el-form-item label="品名"><el-input v-model="searchBasicInfo" placeholder="搜索品名" clearable></el-input></el-form-item>
+                            <el-form-item><el-button type="primary" @click="currentPageBasicInfo = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                        </el-form>
+                        <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="fetchBasicInfo">刷新数据</el-button>
+                    </div>
+                    <el-table :data="pagedBasicInfo" border stripe style="width: 100%" height="calc(100vh - 310px)" v-loading="loadingBasicInfo">
+                        <el-table-column type="index" label="序号" width="60" align="center"></el-table-column>
+                        <el-table-column prop="productName" label="品名" width="150" fixed="left"></el-table-column>
+                        <el-table-column prop="category" label="分类" width="100"></el-table-column>
+                        <el-table-column prop="price" label="价格(元)" width="100"></el-table-column>
+                        <el-table-column prop="specification" label="规格型号" width="120"></el-table-column>
+                        <el-table-column prop="supplier" label="供应商" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="unit" label="单位" width="60" align="center"></el-table-column>
+                        <el-table-column prop="initStock" label="期初库存" width="90" align="center"></el-table-column>
+                        <el-table-column prop="amount" label="金额(元)" width="120">
+                            <template #default="{ row }"><span style="color:#409EFF">{{ row.amount }}</span></template>
+                        </el-table-column>
+                        <el-table-column prop="certNo" label="产品证书编号" width="150"></el-table-column>
+                        <el-table-column prop="prodDate" label="生产日期" width="120"></el-table-column>
+                        <el-table-column prop="validDate" label="有效期" width="120"></el-table-column>
+                        <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+                        <el-pagination v-model:current-page="currentPageBasicInfo" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredBasicInfo.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        <span style="font-weight: bold; font-size: 16px;">期初库存总金额： <span style="color:#F56C6C;"> {{ totalBasicAmount }}</span></span>
+                    </div>
+                </el-card>
+            </div>
+
+            <!-- 2. 入库明细表 -->
+            <div v-show="activeMenu === 'Inbound'">
+                <el-card class="box-card">
+                    <div class="toolbar">
+                        <el-form :inline="true" size="small">
+                            <el-form-item label="品名"><el-input v-model="searchInbound" placeholder="搜索品名" clearable></el-input></el-form-item>
+                            <el-form-item label="入库日期"><el-date-picker v-model="searchInboundDate" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" clearable></el-date-picker></el-form-item>
+                            <el-form-item><el-button type="primary" @click="currentPageInbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                        </el-form>
+                        <el-button type="success" size="small" v-if="currentUser.roleType > 0">新增入库</el-button>
+                    </div>
+                    <el-table :data="pagedInbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
+                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="inboundDate" label="入库日期" width="120"></el-table-column>
+                        <el-table-column prop="productName" label="品名" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="price" label="价格(元)" width="100"></el-table-column>
+                        <el-table-column prop="spec" label="规格型号" width="120"></el-table-column>
+                        <el-table-column prop="supplier" label="供应商" width="180" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="unit" label="单位" width="60" align="center"></el-table-column>
+                        <el-table-column prop="initQty" label="期初库存" width="90" align="center"></el-table-column>
+                        <el-table-column prop="certNo" label="产品证书编号" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="qty" label="入库数量" width="90" align="center">
+                            <template #default="{ row }"><span style="color:#67C23A; font-weight:bold;">+{{ row.qty }}</span></template>
+                        </el-table-column>
+                        <el-table-column prop="amount" label="入库金额(元)" width="120" sortable></el-table-column>
+                        <el-table-column prop="prodDate" label="生产日期" width="120"></el-table-column>
+                        <el-table-column prop="validDate" label="有效期" width="120"></el-table-column>
+                        <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column fixed="right" label="操作" width="120" v-if="currentUser.roleType > 0">
+                            <template #default="{ row }">
+                                <el-button type="primary" link size="small">编辑</el-button>
+                                <el-button type="danger" link size="small">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+                        <el-pagination v-model:current-page="currentPageInbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInbound.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        <span style="font-weight: bold; font-size: 16px;">入库总金额： <span style="color:#F56C6C;"> {{ totalInboundAmount }}</span></span>
+                    </div>
+                </el-card>
+            </div>
+
+            <div v-show="activeMenu === 'Outbound'">
+                <el-card class="box-card">
+                    <div class="toolbar">
+                        <el-form :inline="true" size="small">
+                            <el-form-item label="品名"><el-input v-model="searchOutbound" placeholder="匹配品名" clearable></el-input></el-form-item>
+                            <el-form-item><el-button type="primary" @click="currentPageOutbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                        </el-form>
+                        <el-button type="success" size="small" v-if="currentUser.roleType > 0">新建出库</el-button>
+                    </div>
+                    <el-table :data="pagedOutbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
+                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="outboundDate" label="出库日期" width="120">
+                            <template #default="{ row }">{{ row.outboundDate ? row.outboundDate.substring(0, 10) : '' }}</template>
+                        </el-table-column>
+                        <el-table-column prop="productName" label="品名" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="specification" label="规格型号" width="120"></el-table-column>
+                        <el-table-column prop="supplier" label="供应商" width="180" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="unit" label="单位" width="60" align="center"></el-table-column>
+                        <el-table-column prop="outboundQty" label="出库数量" width="90" align="center">
+                            <template #default="{ row }"><span style="color:#F56C6C; font-weight:bold;">-{{ row.outboundQty }}</span></template>
+                        </el-table-column>
+                        <el-table-column prop="outboundAmount" label="出库金额(元)" width="120" sortable></el-table-column>
+                        <el-table-column prop="purpose" label="用途" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="operator" label="操作人" width="100"></el-table-column>
+                        <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px;">
+                        <el-pagination v-model:current-page="currentPageOutbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredOutbound.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    </div>
+                </el-card>
+            </div>
+
+            <!-- 库存明细表 -->
+            <div v-show="activeMenu === 'Inventory'">
+                <el-card class="box-card">
+                    <div class="toolbar">
+                        <el-form :inline="true" size="small">
+                            <el-form-item label="品名"><el-input v-model="searchInventory" placeholder="匹配品名" clearable></el-input></el-form-item>
+                            <el-form-item><el-button type="primary" @click="currentPageInventory = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                        </el-form>
+                    </div>
+                    <el-table :data="pagedInventory" border stripe style="width: 100%" height="calc(100vh - 310px)">
+                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="productName" label="品名" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="price" label="单价"></el-table-column>
+                        <el-table-column prop="specification" label="规格型号"></el-table-column>
+                        <el-table-column prop="supplier" label="供应商" width="180" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="unit" label="单位" width="60" align="center"></el-table-column>
+                        <el-table-column prop="initStockQty" label="期初库存" width="90" align="center"></el-table-column>
+                        <el-table-column prop="currentStockQty" label="现有库存" width="90" align="center">
+                            <template #default="{ row }">
+                                <el-tag :type="row.currentStockQty <= 0 ? 'danger' : 'success'">{{ row.currentStockQty }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="safeStockQty" label="安全库存" width="90" align="center"></el-table-column>
+                        <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px;">
+                        <el-pagination v-model:current-page="currentPageInventory" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInventory.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    </div>
+                </el-card>
+            </div>
+
+            <!-- 出入库总览表 -->
+            <div v-show="activeMenu === 'Overview'">
+                <el-card class="box-card">
+                    <el-table :data="pagedOverview" border stripe style="width: 100%" height="calc(100vh - 260px)">
+                        <el-table-column prop="productName" label="品名" width="150" fixed="left"></el-table-column>
+                        <el-table-column prop="initStockQty" label="期初量"></el-table-column>
+                        <el-table-column v-for="m in 12" :key="m" :label="m + '月'">
+                            <el-table-column :prop="'m' + m + 'InQty'" label="入库" width="60"></el-table-column>
+                            <el-table-column :prop="'m' + m + 'OutQty'" label="出库" width="60"></el-table-column>
+                            <el-table-column :prop="'m' + m + 'BalanceQty'" label="结存" width="80"></el-table-column>
+                        </el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px;">
+                        <el-pagination v-model:current-page="currentPageOverview" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="overviewData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    </div>
+                </el-card>
+            </div>
+
+            <!-- 用户权限审核 -->
+            <div v-show="activeMenu === 'UserManager'">
+                <el-card class="box-card">
+                    <el-table :data="pagedUserData" border stripe style="width: 100%">
+                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="username" label="用户名"></el-table-column>
+                        <el-table-column prop="roleType" label="角色">
+                            <template #default="{ row }">
+                                <el-tag>{{ roleMap[row.roleType] || '普通用户' }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="status" label="状态">
+                            <template #default="{ row }">
+                                <el-tag :type="row.status === 1 ? 'success' : 'warning'">{{ row.status === 1 ? '正常' : '待审核' }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column fixed="right" label="操作" width="120">
+                           <template #default="{ row }">
+                               <el-button type="success" link size="small" v-if="row.status===0">通过</el-button>
+                           </template>
+                        </el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px;">
+                        <el-pagination v-model:current-page="currentPageUser" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="userData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    </div>
+                </el-card>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted, watch } = Vue;
+
+    // 配置 axios 拦截器，自动添加 X-User-Id header
+    axios.interceptors.request.use(config => {
+        const userStr = localStorage.getItem('wms_user');
+        if (userStr) {
+            try {
+                const user = JSON.parse(userStr);
+                if (user && user.id) {
+                    config.headers['X-User-Id'] = user.id;
+                }
+            } catch (e) {}
+        }
+        return config;
+    });
+
+    const app = createApp({
+        setup() {
+            const activeMenu = ref('Dashboard');
+            const currentUser = ref({ username: '', roleType: 0, id: null });
+            
+            const roleMap = {
+                0: '普通用户(仅查看)',
+                1: '库存管理员',
+                2: '超级管理员'
+            };
+
+            const alertTotal = ref({ lessThanFiveCount: 0, equalsZeroCount: 0, lessThanZeroCount: 0});
+            const alertData = ref([]);
+
+            const inboundData = ref([]);
+            const outboundData = ref([]);
+            const inventoryData = ref([]);
+            const overviewData = ref([]);
+            const userData = ref([]);
+
+            // 搜索变量
+            const searchBasicInfo = ref('');
+            const searchInbound = ref('');
+            const searchInboundDate = ref([]);
+            const searchOutbound = ref('');
+            const searchInventory = ref('');
+
+            // 分页变量
+            const pageSize = ref(10);
+            const pageSizes = [5, 10, 15, 20, 25, 30];
+            const currentPageBasicInfo = ref(1);
+            const currentPageInbound = ref(1);
+            const currentPageOutbound = ref(1);
+            const currentPageInventory = ref(1);
+            const currentPageOverview = ref(1);
+            const currentPageUser = ref(1);
+
+            // 计算属性：过滤后的数据
+            const filteredBasicInfo = computed(() => {
+                let data = basicInfoData.value;
+                if (searchBasicInfo.value) {
+                    data = data.filter(item => item.productName && item.productName.includes(searchBasicInfo.value));
+                }
+                return data;
+            });
+            const pagedBasicInfo = computed(() => {
+                const start = (currentPageBasicInfo.value - 1) * pageSize.value;
+                return filteredBasicInfo.value.slice(start, start + pageSize.value);
+            });
+
+            const filteredInbound = computed(() => {
+                let data = inboundData.value;
+                if (searchInbound.value) {
+                    data = data.filter(item => item.productName && item.productName.includes(searchInbound.value));
+                }
+                if (searchInboundDate.value && searchInboundDate.value.length === 2) {
+                    const [start, end] = searchInboundDate.value;
+                    data = data.filter(item => {
+                        if (!item.inboundDate) return false;
+                        const d = new Date(item.inboundDate);
+                        return d >= start && d <= end;
+                    });
+                }
+                return data;
+            });
+            const pagedInbound = computed(() => {
+                const start = (currentPageInbound.value - 1) * pageSize.value;
+                return filteredInbound.value.slice(start, start + pageSize.value);
+            });
+
+            const filteredOutbound = computed(() => {
+                let data = outboundData.value;
+                if (searchOutbound.value) {
+                    data = data.filter(item => item.productName && item.productName.includes(searchOutbound.value));
+                }
+                return data;
+            });
+            const pagedOutbound = computed(() => {
+                const start = (currentPageOutbound.value - 1) * pageSize.value;
+                return filteredOutbound.value.slice(start, start + pageSize.value);
+            });
+
+            const filteredInventory = computed(() => {
+                let data = inventoryData.value;
+                if (searchInventory.value) {
+                    data = data.filter(item => item.productName && item.productName.includes(searchInventory.value));
+                }
+                return data;
+            });
+            const pagedInventory = computed(() => {
+                const start = (currentPageInventory.value - 1) * pageSize.value;
+                return filteredInventory.value.slice(start, start + pageSize.value);
+            });
+
+            const pagedOverview = computed(() => {
+                const start = (currentPageOverview.value - 1) * pageSize.value;
+                return overviewData.value.slice(start, start + pageSize.value);
+            });
+
+            const pagedUserData = computed(() => {
+                const start = (currentPageUser.value - 1) * pageSize.value;
+                return userData.value.slice(start, start + pageSize.value);
+            });
+
+            const totalInboundAmount = computed(() => {
+                return inboundData.value.reduce((sum, item) => sum + item.amount, 0).toFixed(2);
+            });
+
+            // 补充的接口
+            const fetchDashboard = () => { axios.get('/api/inventory/warnings').then(res => { if(res.data.code === 200) { alertTotal.value = res.data.data; alertData.value = [...(res.data.data.lessThanFive||[]), ...(res.data.data.equalsZero||[]), ...(res.data.data.lessThanZero||[])]; } }).catch(err => {console.error(err)}) };
+            const fetchInbound = () => { axios.get('/api/inbound/list').then(res => { if(res.data.code === 200) inboundData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
+            const fetchOutbound = () => { axios.get('/api/outbound/list').then(res => { if(res.data.code === 200) outboundData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
+            const fetchInventory = () => { axios.get('/api/inventory/list').then(res => { if(res.data.code === 200) inventoryData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
+            const fetchOverview = () => { axios.get('/api/overview/year').then(res => { if(res.data.code === 200) overviewData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
+            const fetchUserManager = () => { axios.get('/api/user/list').then(res => { if(res.data.code === 200) userData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
+
+            // 基础信息
+            const basicInfoData = ref([]);
+            const totalBasicAmount = ref("0.00");
+            const loadingBasicInfo = ref(false);
+
+            const fetchBasicInfo = () => {
+                loadingBasicInfo.value = true;
+                axios.get('/api/basicInfo/list').then(res => {
+                    if(res.data.code === 200) {
+                        basicInfoData.value = res.data.data.list;
+                        totalBasicAmount.value = res.data.data.totalAmount ? parseFloat(res.data.data.totalAmount).toFixed(2) : "0.00";
+                    } 
+                }).catch(err => {
+                    // console.error(err)
+                }).finally(() => {
+                    loadingBasicInfo.value = false;
+                });
+            };
+
+            onMounted(() => {
+                const userStr = localStorage.getItem('wms_user');
+                if (!userStr) {
+                    window.location.href = '/index.html';
+                } else {
+                    currentUser.value = JSON.parse(userStr);
+                }
+                fetchBasicInfo(); fetchDashboard(); fetchInbound(); fetchOutbound(); fetchInventory(); fetchOverview(); fetchUserManager();
+            });
+
+            const handleMenuSelect = (index) => {
+                activeMenu.value = index;
+                if(index === 'BasicInfo') fetchBasicInfo();
+                else if(index === 'Dashboard') fetchDashboard();
+                else if(index === 'Inbound') fetchInbound();
+                else if(index === 'Outbound') fetchOutbound();
+                else if(index === 'Inventory') fetchInventory();
+                else if(index === 'Overview') fetchOverview();
+                else if(index === 'UserManager') fetchUserManager();
+            };
+
+            const handleCommand = (command) => {
+                if(command === 'logout'){
+                    localStorage.removeItem('wms_user');
+                    window.location.href = '/index.html';
+                }
+            };
+
+            return {
+                activeMenu, currentUser, roleMap,
+                handleMenuSelect, handleCommand,
+                alertData, inboundData, outboundData, inventoryData, overviewData, userData, alertTotal, totalInboundAmount,
+                basicInfoData, totalBasicAmount, loadingBasicInfo, fetchBasicInfo,
+                // 搜索变量
+                searchBasicInfo, searchInbound, searchInboundDate, searchOutbound, searchInventory,
+                // 分页变量
+                pageSize, pageSizes,
+                currentPageBasicInfo, currentPageInbound, currentPageOutbound, currentPageInventory, currentPageOverview, currentPageUser,
+                // 分页后数据
+                filteredBasicInfo, pagedBasicInfo, filteredInbound, pagedInbound,
+                filteredOutbound, pagedOutbound, filteredInventory, pagedInventory, pagedOverview, pagedUserData
+            }
+        }
+    });
+    
+    for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+        app.component('ep-' + key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase(), component)
+    }
+    app.use(ElementPlus);
+    app.mount('#app');
+</script>
+</body>
+</html>
