@@ -5,10 +5,12 @@ import com.wsy.common.AuthSupport;
 import com.wsy.common.Result;
 import com.wsy.entity.Inbound;
 import com.wsy.entity.Inventory;
+import com.wsy.entity.OperationLog;
 import com.wsy.entity.Outbound;
 import com.wsy.entity.User;
 import com.wsy.mapper.InboundMapper;
 import com.wsy.mapper.InventoryMapper;
+import com.wsy.mapper.OperationLogMapper;
 import com.wsy.mapper.OutboundMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +32,9 @@ public class InventoryController {
 
     @Autowired
     private OutboundMapper outboundMapper;
+
+    @Autowired
+    private OperationLogMapper logMapper;
 
     @Autowired
     private AuthSupport authSupport;
@@ -126,7 +131,11 @@ public class InventoryController {
 
         if (inventory.getId() == null) {
             inventoryMapper.insert(inventory);
-            return Result.success("新增库存物品成功，操作人: " + user.getUsername());
+            addLog(user.getUsername(), "ADD", "inventory", "新增库存物品: " + inventory.getProductName(), inventory.getId());
+            Map<String, Object> result = new HashMap<>();
+            result.put("id", inventory.getId());
+            result.put("message", "新增库存物品成功，操作人: " + user.getUsername());
+            return Result.success(result);
         }
 
         Inventory old = inventoryMapper.selectById(inventory.getId());
@@ -134,7 +143,36 @@ public class InventoryController {
             return Result.error("库存物品不存在");
         }
         inventoryMapper.updateById(inventory);
-        return Result.success("库存物品修改成功，操作人: " + user.getUsername());
+        addLog(user.getUsername(), "UPDATE", "inventory", "更新库存物品: " + inventory.getProductName(), inventory.getId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", inventory.getId());
+        result.put("message", "库存物品修改成功，操作人: " + user.getUsername());
+        return Result.success(result);
+    }
+
+    @DeleteMapping("/delete/{id}")
+    public Result<?> delete(HttpServletRequest request, @PathVariable Integer id) {
+        User user = authSupport.requireRole(request, 1);
+        Inventory inventory = inventoryMapper.selectById(id);
+        if (inventory == null) {
+            return Result.error("库存物品不存在");
+        }
+
+        QueryWrapper<Inbound> inWrapper = new QueryWrapper<>();
+        inWrapper.eq("inventory_id", id);
+        Long inboundCount = inboundMapper.selectCount(inWrapper);
+
+        QueryWrapper<Outbound> outWrapper = new QueryWrapper<>();
+        outWrapper.eq("inventory_id", id);
+        Long outboundCount = outboundMapper.selectCount(outWrapper);
+
+        if ((inboundCount != null && inboundCount > 0) || (outboundCount != null && outboundCount > 0)) {
+            return Result.error("该库存物品已产生出入库记录，无法删除");
+        }
+
+        inventoryMapper.deleteById(id);
+        addLog(user.getUsername(), "DELETE", "inventory", "删除库存物品: " + inventory.getProductName(), id);
+        return Result.success("库存物品删除成功");
     }
 
     @GetMapping("/warnings")
@@ -238,5 +276,16 @@ public class InventoryController {
         BigDecimal safePrice = safe(price);
         int safeQty = defaultInt(qty);
         return safePrice.multiply(BigDecimal.valueOf(safeQty)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void addLog(String operator, String opType, String module, String description, Integer targetId) {
+        OperationLog log = new OperationLog();
+        log.setOperator(operator);
+        log.setOpType(opType);
+        log.setModule(module);
+        log.setDescription(description);
+        log.setTargetId(targetId);
+        log.setCreateTime(new Date());
+        logMapper.insert(log);
     }
 }

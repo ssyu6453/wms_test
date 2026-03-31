@@ -10,5 +10,13 @@ spring:
 
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
     map-underscore-to-camel-case: true
+
+logging:
+  level:
+    root: info
+    com.wsy: info
+    com.baomidou.mybatisplus: warn
+    org.mybatis: warn
+    org.springframework.jdbc: warn

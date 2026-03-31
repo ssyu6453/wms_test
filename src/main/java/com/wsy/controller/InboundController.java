@@ -61,6 +61,7 @@ public class InboundController {
 
             Map<String, Object> row = new HashMap<>();
             row.put("id", inbound.getId());
+            row.put("inventoryId", inbound.getInventoryId());
             row.put("inboundDate", inbound.getInboundDate());
             row.put("productName", productName);
             row.put("price", price);
@@ -73,6 +74,8 @@ public class InboundController {
             row.put("inboundAmount", safe(inbound.getInboundAmount()));
             row.put("productionDate", inbound.getProductionDate());
             row.put("validDate", inbound.getValidDate());
+            row.put("operator", inbound.getOperator());
+            row.put("createTime", inbound.getCreateTime());
             row.put("remark", inbound.getRemark());
             rows.add(row);
         }
@@ -112,8 +115,12 @@ public class InboundController {
         inventoryMapper.updateById(inventory);
 
         addLog(user.getUsername(), "ADD", "inbound", "新增入库: " + inventory.getProductName() + " x" + inbound.getInboundQty(), inbound.getId());
+        addLog(user.getUsername(), "UPDATE", "inventory", "入库导致库存变更: " + inventory.getProductName() + " +" + inbound.getInboundQty(), inventory.getId());
 
-        return Result.success("入库成功");
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", inbound.getId());
+        result.put("message", "入库成功");
+        return Result.success(result);
     }
 
     @PutMapping("/update")
@@ -158,6 +165,7 @@ public class InboundController {
                 int currentQty = defaultInt(inventory.getCurrentStockQty()) + inbound.getInboundQty();
                 inventory.setCurrentStockQty(currentQty);
                 inventoryMapper.updateById(inventory);
+                addLog(user.getUsername(), "UPDATE", "inventory", "入库更新导致库存变更: " + inventory.getProductName() + " -> " + currentQty, inventory.getId());
             }
         }
 
@@ -189,6 +197,9 @@ public class InboundController {
         }
 
         addLog(user.getUsername(), "DELETE", "inbound", "删除入库: " + inbound.getProductName() + " x" + inbound.getInboundQty(), id);
+        if (inbound.getInventoryId() != null) {
+            addLog(user.getUsername(), "UPDATE", "inventory", "删除入库导致库存回滚: " + inbound.getProductName() + " -" + inbound.getInboundQty(), inbound.getInventoryId());
+        }
 
         inboundMapper.deleteById(id);
         return Result.success("入库记录删除成功");

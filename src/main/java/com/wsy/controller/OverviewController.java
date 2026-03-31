@@ -11,6 +11,7 @@ import com.wsy.mapper.InventoryMapper;
 import com.wsy.mapper.OutboundMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -36,10 +37,84 @@ public class OverviewController {
     @Autowired
     private OutboundMapper outboundMapper;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @GetMapping("/year")
     public Result<?> year(HttpServletRequest request, @RequestParam(value = "year", required = false) Integer year) {
         authSupport.requireLogin(request);
         int targetYear = year == null ? Calendar.getInstance().get(Calendar.YEAR) : year;
+
+        List<Map<String, Object>> dbRows = jdbcTemplate.queryForList(
+                "SELECT * FROM t_io_overview WHERE stat_year = ? ORDER BY product_name",
+                targetYear
+        );
+        if (dbRows.isEmpty() && year == null) {
+            List<Map<String, Object>> latestYearRows = jdbcTemplate.queryForList("SELECT MAX(stat_year) AS y FROM t_io_overview");
+            if (!latestYearRows.isEmpty()) {
+                Integer latestYear = intVal(getIgnoreCase(latestYearRows.get(0), "y"));
+                if (latestYear != null && latestYear > 0) {
+                    targetYear = latestYear;
+                    dbRows = jdbcTemplate.queryForList(
+                            "SELECT * FROM t_io_overview WHERE stat_year = ? ORDER BY product_name",
+                            targetYear
+                    );
+                }
+            }
+        }
+        if (!dbRows.isEmpty()) {
+            List<Map<String, Object>> rows = new ArrayList<>();
+            BigDecimal totalInitAmount = BigDecimal.ZERO;
+            List<Map<String, Object>> monthlyAmountSummary = new ArrayList<>();
+            for (int m = 1; m <= 12; m++) {
+                Map<String, Object> monthTotal = new HashMap<>();
+                monthTotal.put("month", m);
+                monthTotal.put("inboundAmount", BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+                monthTotal.put("outboundAmount", BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+                monthTotal.put("balanceAmount", BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+                monthlyAmountSummary.add(monthTotal);
+            }
+
+            for (Map<String, Object> dbRow : dbRows) {
+                Map<String, Object> row = new HashMap<>();
+                Object productNameObj = getIgnoreCase(dbRow, "product_name");
+                row.put("inventoryId", intVal(getIgnoreCase(dbRow, "id")));
+                row.put("productName", productNameObj == null ? "" : String.valueOf(productNameObj));
+                row.put("initStockQty", intVal(getIgnoreCase(dbRow, "init_stock_qty")));
+                BigDecimal initAmount = decimalVal(getIgnoreCase(dbRow, "init_stock_amount"));
+                row.put("initStockAmount", initAmount);
+                totalInitAmount = totalInitAmount.add(initAmount);
+
+                for (int month = 1; month <= 12; month++) {
+                    int inQty = intVal(getIgnoreCase(dbRow, "m" + month + "_in_qty"));
+                    int outQty = intVal(getIgnoreCase(dbRow, "m" + month + "_out_qty"));
+                    int balanceQty = intVal(getIgnoreCase(dbRow, "m" + month + "_balance_qty"));
+                    BigDecimal inAmount = decimalVal(getIgnoreCase(dbRow, "m" + month + "_in_amount"));
+                    BigDecimal outAmount = decimalVal(getIgnoreCase(dbRow, "m" + month + "_out_amount"));
+                    BigDecimal balanceAmount = decimalVal(getIgnoreCase(dbRow, "m" + month + "_balance_amount"));
+
+                    row.put("m" + month + "InQty", inQty);
+                    row.put("m" + month + "OutQty", outQty);
+                    row.put("m" + month + "BalanceQty", balanceQty);
+                    row.put("m" + month + "InAmount", inAmount);
+                    row.put("m" + month + "OutAmount", outAmount);
+                    row.put("m" + month + "BalanceAmount", balanceAmount);
+
+                    Map<String, Object> monthTotal = monthlyAmountSummary.get(month - 1);
+                    monthTotal.put("inboundAmount", safe((BigDecimal) monthTotal.get("inboundAmount")).add(inAmount));
+                    monthTotal.put("outboundAmount", safe((BigDecimal) monthTotal.get("outboundAmount")).add(outAmount));
+                    monthTotal.put("balanceAmount", safe((BigDecimal) monthTotal.get("balanceAmount")).add(balanceAmount));
+                }
+                rows.add(row);
+            }
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("year", targetYear);
+            result.put("list", rows);
+            result.put("totalInitAmount", totalInitAmount.setScale(2, RoundingMode.HALF_UP));
+            result.put("monthlyAmountSummary", monthlyAmountSummary);
+            return Result.success(result);
+        }
 
         List<Inventory> inventories = inventoryMapper.selectList(new QueryWrapper<Inventory>().orderByAsc("product_name"));
         List<Inbound> inbounds = inboundMapper.selectList(new QueryWrapper<Inbound>().orderByAsc("inbound_date"));
@@ -169,5 +244,45 @@ public class OverviewController {
 
     private BigDecimal safe(BigDecimal value) {
         return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private Object getIgnoreCase(Map<String, Object> row, String key) {
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private int intVal(Object value) {
+        if (value == null) {
+            return 0;
+        }
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private BigDecimal decimalVal(Object value) {
+        if (value == null) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (value instanceof BigDecimal bd) {
+            return bd.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (value instanceof Number n) {
+            return BigDecimal.valueOf(n.doubleValue()).setScale(2, RoundingMode.HALF_UP);
+        }
+        try {
+            return new BigDecimal(String.valueOf(value)).setScale(2, RoundingMode.HALF_UP);
+        } catch (Exception e) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
     }
 }

@@ -9,6 +9,8 @@
     <script src="https://unpkg.com/@element-plus/icons-vue"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: "Microsoft YaHei", sans-serif; background-color: #f0f2f5; }
@@ -42,7 +44,7 @@
         .pdf-footer-row { display: flex; justify-content: space-between; margin-top: 10px; }
         /* A4预览样式 */
         .a4-preview-container { background: #f5f5f5; padding: 20px; display: flex; justify-content: center; }
-        .a4-preview { width: 210mm; min-height: 297mm; background: white; box-shadow: 0 2px 12px rgba(0,0,0,0.15); padding: 20mm; box-sizing: border-box; transform-origin: top center; }
+        .a4-preview { width: 210mm; min-height: 297mm; background: white; box-shadow: 0 2px 12px rgba(0,0,0,0.15); padding: 20mm; box-sizing: border-box; transform-origin: top center; overflow: hidden; }
         .a4-preview-scaled { transform: scale(0.5); margin-bottom: -148.5mm; }
         .layout-card { cursor: pointer; border: 2px solid transparent; transition: all 0.3s; }
         .layout-card:hover { border-color: #409EFF; }
@@ -51,6 +53,21 @@
         .field-item .el-checkbox { margin-right: 5px; }
         .field-order-btns { margin-left: 10px; }
         .field-order-btns .el-button { padding: 2px 5px; }
+        .field-sort-list { border: 1px dashed #dcdfe6; border-radius: 6px; padding: 10px; background: #fafafa; }
+        .field-sort-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; margin-bottom: 8px; cursor: move; }
+        .field-sort-item:last-child { margin-bottom: 0; }
+        .field-sort-item.dragging { opacity: 0.6; }
+        .field-sort-item-left { display: flex; align-items: center; gap: 8px; }
+        .field-drag-handle { color: #909399; font-size: 16px; }
+        .a4-preview-mini { transform: scale(var(--preview-scale, 0.50)); transform-origin: top center; margin-bottom: calc(-297mm * (1 - var(--preview-scale, 0.50))); }
+        .a4-preview-note { color: #909399; font-size: 12px; margin-top: 6px; }
+        .a4-preview-container.dialog-preview { max-height: 420px; overflow: auto; position: relative; z-index: 1; }
+        .a4-preview-container.dialog-preview .a4-preview { pointer-events: none; }
+        .el-dialog__footer { position: relative; z-index: 3; }
+        .amount-summary { font-weight: bold; font-size: 22px; color: #303133; }
+        .amount-summary .amount-number { color: #F56C6C; font-size: 24px; }
+        .pagination-summary-row { margin-top: 15px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+        .pagination-summary-left { min-width: 0; overflow-x: auto; }
     </style>
 </head>
 <body>
@@ -168,9 +185,11 @@
                             </template>
                         </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
-                        <el-pagination v-model:current-page="currentPageBasicInfo" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredBasicInfo.length" layout="total, sizes, prev, pager, next, jumper" background />
-                        <span style="font-weight: bold; font-size: 16px;">期初库存总金额： <span style="color:#F56C6C;"> {{ totalBasicAmount }}</span></span>
+                    <div class="pagination-summary-row">
+                        <div class="pagination-summary-left">
+                            <el-pagination v-model:current-page="currentPageBasicInfo" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredBasicInfo.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        </div>
+                        <span class="amount-summary">基础信息总金额：<span class="amount-number">{{ totalBasicAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -189,7 +208,7 @@
                         <div class="toolbar-right">
                             <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openInboundDialog()"><el-icon><ep-plus /></el-icon> 新增入库</el-button>
                             <el-button type="primary" size="small" @click="exportInboundExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
-                            <el-button type="info" size="small" @click="openInboundTemplateDialog"><el-icon><ep-printer /></el-icon> 生成入库单</el-button>
+                            <el-button type="info" size="small" @click.stop="onTemplateButtonClick('inbound')"><el-icon><ep-printer /></el-icon> 生成入库单</el-button>
                         </div>
                     </div>
                     <el-table :data="pagedInbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
@@ -214,9 +233,11 @@
                             </template>
                         </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
-                        <el-pagination v-model:current-page="currentPageInbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInbound.length" layout="total, sizes, prev, pager, next, jumper" background />
-                        <span style="font-weight: bold; font-size: 16px;">入库总金额： <span style="color:#F56C6C;"> {{ totalInboundAmount }}</span></span>
+                    <div class="pagination-summary-row">
+                        <div class="pagination-summary-left">
+                            <el-pagination v-model:current-page="currentPageInbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInbound.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        </div>
+                        <span class="amount-summary">入库总金额：<span class="amount-number">{{ totalInboundAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -234,7 +255,7 @@
                         <div class="toolbar-right">
                             <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openOutboundDialog()"><el-icon><ep-plus /></el-icon> 新建出库</el-button>
                             <el-button type="primary" size="small" @click="exportOutboundExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
-                            <el-button type="info" size="small" @click="openOutboundTemplateDialog"><el-icon><ep-printer /></el-icon> 生成出库单</el-button>
+                            <el-button type="info" size="small" @click.stop="onTemplateButtonClick('outbound')"><el-icon><ep-printer /></el-icon> 生成出库单</el-button>
                         </div>
                     </div>
                     <el-table :data="pagedOutbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
@@ -259,9 +280,11 @@
                             </template>
                         </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
-                        <el-pagination v-model:current-page="currentPageOutbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredOutbound.length" layout="total, sizes, prev, pager, next, jumper" background />
-                        <span style="font-weight: bold; font-size: 16px;">出库总金额： <span style="color:#F56C6C;"> {{ totalOutboundAmount }}</span></span>
+                    <div class="pagination-summary-row">
+                        <div class="pagination-summary-left">
+                            <el-pagination v-model:current-page="currentPageOutbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredOutbound.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        </div>
+                        <span class="amount-summary">出库总金额：<span class="amount-number">{{ totalOutboundAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -296,15 +319,18 @@
                         </el-table-column>
                         <el-table-column prop="safeStockQty" label="安全库存" width="90" align="center"></el-table-column>
                         <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
-                        <el-table-column fixed="right" label="操作" width="100" v-if="currentUser.roleType > 0">
+                        <el-table-column fixed="right" label="操作" width="140" v-if="currentUser.roleType > 0">
                             <template #default="{ row }">
                                 <el-button type="primary" link size="small" @click="openInventoryDialog(row)">编辑</el-button>
+                                <el-button type="danger" link size="small" @click="deleteInventory(row)">删除</el-button>
                             </template>
                         </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
-                        <el-pagination v-model:current-page="currentPageInventory" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInventory.length" layout="total, sizes, prev, pager, next, jumper" background />
-                        <span style="font-weight: bold; font-size: 16px;">库存总金额： <span style="color:#F56C6C;"> {{ totalInventoryAmount }}</span></span>
+                    <div class="pagination-summary-row">
+                        <div class="pagination-summary-left">
+                            <el-pagination v-model:current-page="currentPageInventory" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInventory.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        </div>
+                        <span class="amount-summary">库存总金额：<span class="amount-number">{{ totalInventoryAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -327,8 +353,11 @@
                             <el-table-column :prop="'m' + m + 'BalanceQty'" label="结存" width="80"></el-table-column>
                         </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px;">
-                        <el-pagination v-model:current-page="currentPageOverview" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="overviewData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    <div class="pagination-summary-row">
+                        <div class="pagination-summary-left">
+                            <el-pagination v-model:current-page="currentPageOverview" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="overviewData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        </div>
+                        <span class="amount-summary">总览入库：<span style="color:#67C23A; font-size:24px;">{{ totalOverviewInAmount }}</span>，总览出库：<span class="amount-number">{{ totalOverviewOutAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -433,9 +462,29 @@
                                 </el-row>
 
                                 <el-divider content-position="left">显示字段（拖拽排序）</el-divider>
-                                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
-                                    <el-checkbox v-for="field in inboundFieldOptions" :key="field.key" v-model="field.checked">{{ field.label }}</el-checkbox>
+                                <div class="field-sort-list" style="margin-bottom: 20px;">
+                                    <div
+                                        v-for="(field, index) in inboundFieldOptions"
+                                        :key="field.key"
+                                        class="field-sort-item"
+                                        :class="{ dragging: draggingInboundIndex === index }"
+                                        draggable="true"
+                                        @dragstart="onFieldDragStart('inbound', index)"
+                                        @dragover.prevent
+                                        @drop="onFieldDrop('inbound', index)">
+                                        <div class="field-sort-item-left">
+                                            <span class="field-drag-handle">☰</span>
+                                            <el-checkbox v-model="field.checked">{{ field.label }}</el-checkbox>
+                                        </div>
+                                        <span style="color:#909399; font-size:12px;">第 {{ index + 1 }} 列</span>
+                                    </div>
                                 </div>
+
+                                <el-divider content-position="left">A4预览</el-divider>
+                                <div class="a4-preview-container" style="padding: 10px; overflow: auto;">
+                                    <div class="a4-preview a4-preview-mini" v-html="inboundA4PreviewHtml"></div>
+                                </div>
+                                <div class="a4-preview-note">预览会实时反映字段显示、标题、页脚标签和编号规则。</div>
 
                                 <el-divider content-position="left">页脚信息</el-divider>
                                 <el-row :gutter="20">
@@ -494,9 +543,29 @@
                                 </el-row>
 
                                 <el-divider content-position="left">显示字段</el-divider>
-                                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
-                                    <el-checkbox v-for="field in outboundFieldOptions" :key="field.key" v-model="field.checked">{{ field.label }}</el-checkbox>
+                                <div class="field-sort-list" style="margin-bottom: 20px;">
+                                    <div
+                                        v-for="(field, index) in outboundFieldOptions"
+                                        :key="field.key"
+                                        class="field-sort-item"
+                                        :class="{ dragging: draggingOutboundIndex === index }"
+                                        draggable="true"
+                                        @dragstart="onFieldDragStart('outbound', index)"
+                                        @dragover.prevent
+                                        @drop="onFieldDrop('outbound', index)">
+                                        <div class="field-sort-item-left">
+                                            <span class="field-drag-handle">☰</span>
+                                            <el-checkbox v-model="field.checked">{{ field.label }}</el-checkbox>
+                                        </div>
+                                        <span style="color:#909399; font-size:12px;">第 {{ index + 1 }} 列</span>
+                                    </div>
                                 </div>
+
+                                <el-divider content-position="left">A4预览</el-divider>
+                                <div class="a4-preview-container" style="padding: 10px; overflow: auto;">
+                                    <div class="a4-preview a4-preview-mini" v-html="outboundA4PreviewHtml"></div>
+                                </div>
+                                <div class="a4-preview-note">预览会实时反映字段显示、标题、页脚标签和编号规则。</div>
 
                                 <el-divider content-position="left">页脚信息</el-divider>
                                 <el-row :gutter="20">
@@ -582,7 +651,6 @@
 
     <!-- PDF预览容器 -->
     <div id="pdfContainer" class="pdf-container"></div>
-
     <!-- 基础信息对话框 -->
     <el-dialog v-model="basicInfoDialogVisible" :title="basicInfoForm.id ? '编辑基础信息' : '新增基础信息'" width="600px">
         <el-form :model="basicInfoForm" label-width="100px">
@@ -615,8 +683,8 @@
     </el-dialog>
 
     <!-- 入库对话框 -->
-    <el-dialog v-model="inboundDialogVisible" :title="inboundForm.id ? '编辑入库' : '新增入库'" width="500px">
-        <el-form :model="inboundForm" label-width="100px">
+    <el-dialog v-model="inboundDialogVisible" :title="inboundForm.id ? '编辑入库' : '新增入库（可多条）'" width="500px">
+        <el-form :model="inboundForm" label-width="100px" v-if="inboundForm.id">
             <el-form-item label="选择物品" required>
                 <el-select v-model="inboundForm.inventoryId" placeholder="请选择库存物品" style="width:100%" filterable @change="onInboundInventoryChange">
                     <el-option v-for="item in inventoryOptions" :key="item.id" :label="item.productName + ' - ' + item.specification" :value="item.id"></el-option>
@@ -628,19 +696,65 @@
             <el-form-item label="入库数量" required>
                 <el-input-number v-model="inboundForm.inboundQty" :min="1" style="width:100%"></el-input-number>
             </el-form-item>
+            <el-form-item label="操作员">
+                <el-input :model-value="currentUser.username" disabled></el-input>
+            </el-form-item>
             <el-form-item label="备注">
                 <el-input v-model="inboundForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input>
             </el-form-item>
         </el-form>
+        <div v-else>
+            <el-form label-width="100px">
+                <el-form-item label="入库日期" required>
+                    <el-date-picker v-model="inboundForm.inboundDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker>
+                </el-form-item>
+                <el-form-item label="操作员">
+                    <el-input :model-value="currentUser.username" disabled></el-input>
+                </el-form-item>
+            </el-form>
+            <el-table :data="inboundBatchRows" border size="small" style="width:100%; margin-top: 8px;">
+                <el-table-column label="物品" min-width="180">
+                    <template #default="{ row }">
+                        <el-select v-model="row.itemToken" placeholder="可选库存/基础信息，或直接输入" filterable allow-create default-first-option clearable style="width:100%" @change="onInboundBatchItemChange(row)">
+                            <el-option v-for="item in inboundItemOptions" :key="item.value" :label="item.label" :value="item.value"></el-option>
+                        </el-select>
+                    </template>
+                </el-table-column>
+                <el-table-column label="详情" min-width="260">
+                    <template #default="{ row }">
+                        <span style="color:#606266;">{{ row.itemDetail || '输入关键字搜索后可查看规格/单价/供应商等详情' }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="数量" width="140" align="center">
+                    <template #default="{ row }">
+                        <el-input-number v-model="row.inboundQty" :min="1" style="width:120px"></el-input-number>
+                    </template>
+                </el-table-column>
+                <el-table-column label="备注" min-width="220">
+                    <template #default="{ row }">
+                        <el-input v-model="row.remark" placeholder="备注"></el-input>
+                    </template>
+                </el-table-column>
+                <el-table-column label="操作" width="80" align="center">
+                    <template #default="{ $index }">
+                        <el-button type="danger" link @click="removeInboundBatchRow($index)">移除</el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+            <div style="margin-top: 10px;">
+                <el-button type="primary" plain @click="addInboundBatchRow">新增一行</el-button>
+            </div>
+        </div>
         <template #footer>
             <el-button @click="inboundDialogVisible = false">取消</el-button>
             <el-button type="primary" @click="submitInbound">确定</el-button>
+            <el-button type="success" @click.stop="onTemplateButtonClick('inbound')">生成入库单</el-button>
         </template>
     </el-dialog>
 
     <!-- 出库对话框 -->
-    <el-dialog v-model="outboundDialogVisible" :title="outboundForm.id ? '编辑出库' : '新建出库'" width="500px">
-        <el-form :model="outboundForm" label-width="100px">
+    <el-dialog v-model="outboundDialogVisible" :title="outboundForm.id ? '编辑出库' : '新建出库（可多条）'" width="500px">
+        <el-form :model="outboundForm" label-width="100px" v-if="outboundForm.id">
             <el-form-item label="选择物品" required>
                 <el-select v-model="outboundForm.inventoryId" placeholder="请选择库存物品" style="width:100%" filterable @change="onOutboundInventoryChange">
                     <el-option v-for="item in inventoryOptions" :key="item.id" :label="item.productName + ' - ' + item.specification + ' (库存:' + item.currentStockQty + ')'" :value="item.id"></el-option>
@@ -652,6 +766,9 @@
             <el-form-item label="出库数量" required>
                 <el-input-number v-model="outboundForm.outboundQty" :min="1" :max="selectedInventoryStock" style="width:100%"></el-input-number>
             </el-form-item>
+            <el-form-item label="操作员">
+                <el-input :model-value="currentUser.username" disabled></el-input>
+            </el-form-item>
             <el-form-item label="用途">
                 <el-input v-model="outboundForm.purpose" placeholder="请输入用途"></el-input>
             </el-form-item>
@@ -659,9 +776,57 @@
                 <el-input v-model="outboundForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input>
             </el-form-item>
         </el-form>
+        <div v-else>
+            <el-form label-width="100px">
+                <el-form-item label="出库日期" required>
+                    <el-date-picker v-model="outboundForm.outboundDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker>
+                </el-form-item>
+                <el-form-item label="操作员">
+                    <el-input :model-value="currentUser.username" disabled></el-input>
+                </el-form-item>
+            </el-form>
+            <el-table :data="outboundBatchRows" border size="small" style="width:100%; margin-top: 8px;">
+                <el-table-column label="物品" min-width="180">
+                    <template #default="{ row }">
+                        <el-select v-model="row.itemToken" placeholder="可选库存/基础信息，或直接输入" filterable allow-create default-first-option clearable style="width:100%" @change="onOutboundBatchItemChange(row)">
+                            <el-option v-for="item in outboundItemOptions" :key="item.value" :label="item.label" :value="item.value"></el-option>
+                        </el-select>
+                    </template>
+                </el-table-column>
+                <el-table-column label="详情" min-width="260">
+                    <template #default="{ row }">
+                        <span style="color:#606266;">{{ row.itemDetail || '输入关键字搜索后可查看规格/单价/供应商等详情' }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column label="数量" width="140" align="center">
+                    <template #default="{ row }">
+                        <el-input-number v-model="row.outboundQty" :min="1" style="width:120px"></el-input-number>
+                    </template>
+                </el-table-column>
+                <el-table-column label="用途" min-width="120">
+                    <template #default="{ row }">
+                        <el-input v-model="row.purpose" placeholder="用途"></el-input>
+                    </template>
+                </el-table-column>
+                <el-table-column label="备注" min-width="220">
+                    <template #default="{ row }">
+                        <el-input v-model="row.remark" placeholder="备注"></el-input>
+                    </template>
+                </el-table-column>
+                <el-table-column label="操作" width="80" align="center">
+                    <template #default="{ $index }">
+                        <el-button type="danger" link @click="removeOutboundBatchRow($index)">移除</el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+            <div style="margin-top: 10px;">
+                <el-button type="primary" plain @click="addOutboundBatchRow">新增一行</el-button>
+            </div>
+        </div>
         <template #footer>
             <el-button @click="outboundDialogVisible = false">取消</el-button>
             <el-button type="primary" @click="submitOutbound">确定</el-button>
+            <el-button type="success" @click.stop="onTemplateButtonClick('outbound')">生成出库单</el-button>
         </template>
     </el-dialog>
 
@@ -724,7 +889,7 @@
     </el-dialog>
 
     <!-- 入库单模板对话框 -->
-    <el-dialog v-model="inboundTemplateDialogVisible" title="生成入库单" width="600px">
+    <el-dialog v-model="inboundTemplateDialogVisible" title="生成入库单" width="900px">
         <el-form :model="inboundTemplateForm" label-width="100px">
             <el-form-item label="单据编号"><el-input v-model="inboundTemplateForm.docNo" placeholder="自动生成或手动输入"></el-input></el-form-item>
             <el-form-item label="入库日期"><el-date-picker v-model="inboundTemplateForm.date" type="date" value-format="YYYY-MM-DD" style="width:100%"></el-date-picker></el-form-item>
@@ -734,9 +899,18 @@
                     <el-option v-for="item in inboundData" :key="item.id" :label="item.productName + ' - ' + item.inboundQty + item.unit + ' (' + (item.inboundDate||'').substring(0,10) + ')'" :value="item.id"></el-option>
                 </el-select>
             </el-form-item>
-            <el-form-item label="经办人"><el-input v-model="inboundTemplateForm.handler" placeholder="请输入经办人"></el-input></el-form-item>
+            <el-form-item label="操作员"><el-input v-model="inboundTemplateForm.handler" disabled></el-input></el-form-item>
             <el-form-item label="备注"><el-input v-model="inboundTemplateForm.remark" type="textarea" :rows="2"></el-input></el-form-item>
         </el-form>
+        <el-divider content-position="left">单据实时预览</el-divider>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <el-button size="small" @click="inboundPreviewScale = Math.max(0.35, +(inboundPreviewScale - 0.05).toFixed(2))">缩小</el-button>
+            <el-slider v-model="inboundPreviewScale" :min="0.35" :max="0.9" :step="0.05" style="flex:1;"></el-slider>
+            <el-button size="small" @click="inboundPreviewScale = Math.min(0.9, +(inboundPreviewScale + 0.05).toFixed(2))">放大</el-button>
+        </div>
+        <div class="a4-preview-container dialog-preview" style="padding: 10px;">
+            <div class="a4-preview a4-preview-mini" :style="{'--preview-scale': inboundPreviewScale}" v-html="inboundLivePreviewHtml"></div>
+        </div>
         <template #footer>
             <el-button @click="inboundTemplateDialogVisible = false">取消</el-button>
             <el-button type="primary" @click="generateInboundExcel">生成Excel</el-button>
@@ -745,7 +919,7 @@
     </el-dialog>
 
     <!-- 出库单模板对话框 -->
-    <el-dialog v-model="outboundTemplateDialogVisible" title="生成出库单" width="600px">
+    <el-dialog v-model="outboundTemplateDialogVisible" title="生成出库单" width="900px">
         <el-form :model="outboundTemplateForm" label-width="100px">
             <el-form-item label="单据编号"><el-input v-model="outboundTemplateForm.docNo" placeholder="自动生成或手动输入"></el-input></el-form-item>
             <el-form-item label="出库日期"><el-date-picker v-model="outboundTemplateForm.date" type="date" value-format="YYYY-MM-DD" style="width:100%"></el-date-picker></el-form-item>
@@ -755,9 +929,18 @@
                     <el-option v-for="item in outboundData" :key="item.id" :label="item.productName + ' - ' + item.outboundQty + item.unit + ' (' + (item.outboundDate||'').substring(0,10) + ')'" :value="item.id"></el-option>
                 </el-select>
             </el-form-item>
-            <el-form-item label="经办人"><el-input v-model="outboundTemplateForm.handler" placeholder="请输入经办人"></el-input></el-form-item>
+            <el-form-item label="操作员"><el-input v-model="outboundTemplateForm.handler" disabled></el-input></el-form-item>
             <el-form-item label="备注"><el-input v-model="outboundTemplateForm.remark" type="textarea" :rows="2"></el-input></el-form-item>
         </el-form>
+        <el-divider content-position="left">单据实时预览</el-divider>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <el-button size="small" @click="outboundPreviewScale = Math.max(0.35, +(outboundPreviewScale - 0.05).toFixed(2))">缩小</el-button>
+            <el-slider v-model="outboundPreviewScale" :min="0.35" :max="0.9" :step="0.05" style="flex:1;"></el-slider>
+            <el-button size="small" @click="outboundPreviewScale = Math.min(0.9, +(outboundPreviewScale + 0.05).toFixed(2))">放大</el-button>
+        </div>
+        <div class="a4-preview-container dialog-preview" style="padding: 10px;">
+            <div class="a4-preview a4-preview-mini" :style="{'--preview-scale': outboundPreviewScale}" v-html="outboundLivePreviewHtml"></div>
+        </div>
         <template #footer>
             <el-button @click="outboundTemplateDialogVisible = false">取消</el-button>
             <el-button type="primary" @click="generateOutboundExcel">生成Excel</el-button>
@@ -825,8 +1008,10 @@
             const basicInfoForm = ref({});
             const inboundDialogVisible = ref(false);
             const inboundForm = ref({});
+            const inboundBatchRows = ref([]);
             const outboundDialogVisible = ref(false);
             const outboundForm = ref({});
+            const outboundBatchRows = ref([]);
             const inventoryDialogVisible = ref(false);
             const inventoryForm = ref({});
             const auditDialogVisible = ref(false);
@@ -837,17 +1022,17 @@
             // 模板管理
             const templateTab = ref('inbound');
             const inboundTemplate = ref({
-                prefix: 'RK', dateFormat: 'YYYYMMDD', seqLength: 4,
+                prefix: '入', dateFormat: 'YYYYMMDD', seqLength: 4,
                 title: '入库单', companyName: '',
                 handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注'
             });
             const outboundTemplate = ref({
-                prefix: 'CK', dateFormat: 'YYYYMMDD', seqLength: 4,
+                prefix: '出', dateFormat: 'YYYYMMDD', seqLength: 4,
                 title: '出库单', companyName: '',
                 handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注'
             });
             const inboundFieldOptions = ref([
-                { key: 'id', label: 'ID', checked: true },
+                { key: 'id', label: '序号', checked: true },
                 { key: 'productName', label: '品名', checked: true },
                 { key: 'specification', label: '规格型号', checked: true },
                 { key: 'unit', label: '单位', checked: true },
@@ -858,7 +1043,7 @@
                 { key: 'remark', label: '备注', checked: false }
             ]);
             const outboundFieldOptions = ref([
-                { key: 'id', label: 'ID', checked: true },
+                { key: 'id', label: '序号', checked: true },
                 { key: 'productName', label: '品名', checked: true },
                 { key: 'specification', label: '规格型号', checked: true },
                 { key: 'unit', label: '单位', checked: true },
@@ -869,6 +1054,11 @@
                 { key: 'supplier', label: '供应商', checked: false },
                 { key: 'remark', label: '备注', checked: false }
             ]);
+
+            const inboundTemplateId = ref(null);
+            const outboundTemplateId = ref(null);
+            const draggingInboundIndex = ref(null);
+            const draggingOutboundIndex = ref(null);
 
             // 编号预览
             const previewInboundDocNo = computed(() => {
@@ -886,31 +1076,439 @@
                 return t.prefix + dateStr + '0'.repeat(t.seqLength - 1) + '1';
             });
 
+            const getSafePdfFileName = (rawName) => {
+                const fallback = '单据';
+                const cleaned = (rawName || fallback)
+                    .replace(/[\\/:*?"<>|]/g, '_')
+                    .replace(/\s+/g, '_')
+                    .trim();
+                return cleaned || fallback;
+            };
+
+            const safeParseJson = (raw, fallback) => {
+                if (raw === null || raw === undefined || raw === '') return fallback;
+                if (typeof raw === 'object') return raw;
+                try {
+                    return JSON.parse(raw);
+                } catch (_) {
+                    return fallback;
+                }
+            };
+
+            const defaultInboundTemplate = () => ({
+                prefix: '入', dateFormat: 'YYYYMMDD', seqLength: 4,
+                title: '入库单', companyName: '',
+                handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注'
+            });
+            const defaultOutboundTemplate = () => ({
+                prefix: '出', dateFormat: 'YYYYMMDD', seqLength: 4,
+                title: '出库单', companyName: '',
+                handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注'
+            });
+            const normalizeTemplate = (candidate, type) => {
+                const base = type === 'inbound' ? defaultInboundTemplate() : defaultOutboundTemplate();
+                if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return base;
+                return {
+                    ...base,
+                    ...candidate,
+                    seqLength: Number.isFinite(Number(candidate.seqLength)) ? Number(candidate.seqLength) : base.seqLength
+                };
+            };
+            const normalizeFields = (candidate, fallback) => {
+                if (!Array.isArray(candidate)) return fallback;
+                return candidate
+                    .filter(x => x && typeof x === 'object')
+                    .map(x => ({ key: x.key, label: x.label, checked: !!x.checked }))
+                    .filter(x => !!x.key && !!x.label);
+            };
+
+            const inboundItemOptions = computed(() => {
+                const inv = inventoryOptions.value
+                    .filter(item => item && item.productName && String(item.productName).trim())
+                    .map(item => ({
+                    value: 'inv:' + item.id,
+                    label: `[库存] ${item.productName} | 规格:${item.specification || '-'} | 单价:${item.price || 0} | 供应商:${item.supplier || '-'} | 库存:${item.currentStockQty || 0}`
+                }));
+                const basic = basicInfoData.value
+                    .filter(item => item && item.productName && String(item.productName).trim())
+                    .map(item => ({
+                    value: 'basic:' + item.id,
+                    label: `[基础] ${item.productName} | 规格:${item.specification || '-'} | 单价:${item.price || 0} | 供应商:${item.supplier || '-'}`
+                }));
+                return [...inv, ...basic];
+            });
+
+            const outboundItemOptions = computed(() => {
+                const inv = inventoryOptions.value
+                    .filter(item => item && item.productName && String(item.productName).trim())
+                    .map(item => ({
+                    value: 'inv:' + item.id,
+                    label: `[库存] ${item.productName} | 规格:${item.specification || '-'} | 单价:${item.price || 0} | 供应商:${item.supplier || '-'} | 库存:${item.currentStockQty || 0}`
+                }));
+                const basic = basicInfoData.value
+                    .filter(item => item && item.productName && String(item.productName).trim())
+                    .map(item => ({
+                    value: 'basic:' + item.id,
+                    label: `[基础] ${item.productName} | 规格:${item.specification || '-'} | 单价:${item.price || 0} | 供应商:${item.supplier || '-'}`
+                }));
+                return [...inv, ...basic];
+            });
+
+            const buildDocTableHtml = (fields, items) => {
+                if (!fields.length) {
+                    return '<p style="color:#f56c6c;">请至少勾选一个字段。</p>';
+                }
+                return `<table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px;">
+                    <thead><tr style="background-color: #f0f0f0;">
+                        ${fields.map(f => `<th style="border: 1px solid #333; padding: 8px;">${f.label}</th>`).join('')}
+                    </tr></thead>
+                    <tbody>
+                        ${items.map((item, idx) => `<tr>
+                            ${fields.map(f => `<td style="border: 1px solid #333; padding: 6px; text-align: center;">${f.key === 'id' ? idx + 1 : (item[f.key] ?? '')}</td>`).join('')}
+                        </tr>`).join('')}
+                    </tbody>
+                </table>`;
+            };
+
+            const pickSelectedRows = (rows, selectedIds) => {
+                const idSet = new Set((selectedIds || []).map(v => String(v)));
+                return rows.filter(item => idSet.has(String(item.id)));
+            };
+
+            const buildInboundDocHtml = (items, form) => {
+                const t = inboundTemplate.value;
+                const fields = inboundFieldOptions.value.filter(f => f.checked);
+                const total = items.reduce((sum, item) => sum + parseFloat(item.inboundAmount || 0), 0).toFixed(2);
+                return `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 8mm; width: 100%; min-height: 257mm; box-sizing: border-box; background: #fff; color: #111;">
+                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
+                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
+                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
+                        <span>单据编号：${form.docNo}</span>
+                        <span>日期：${form.date}</span>
+                    </div>
+                    <p style="font-size: 14px; margin: 10px 0;">供应商：${form.supplier || ''}</p>
+                    ${buildDocTableHtml(fields, items)}
+                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <span>${t.handlerLabel}：${form.handler || ''}</span>
+                        <span>${t.approverLabel}：${form.approver || ''}</span>
+                    </div>
+                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${form.remark || ''}</p>
+                </div>`;
+            };
+
+            const buildOutboundDocHtml = (items, form) => {
+                const t = outboundTemplate.value;
+                const fields = outboundFieldOptions.value.filter(f => f.checked);
+                const total = items.reduce((sum, item) => sum + parseFloat(item.outboundAmount || 0), 0).toFixed(2);
+                return `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 8mm; width: 100%; min-height: 257mm; box-sizing: border-box; background: #fff; color: #111;">
+                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
+                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
+                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
+                        <span>单据编号：${form.docNo}</span>
+                        <span>日期：${form.date}</span>
+                    </div>
+                    <p style="font-size: 14px; margin: 10px 0;">领用部门：${form.department || ''}</p>
+                    ${buildDocTableHtml(fields, items)}
+                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <span>${t.handlerLabel}：${form.handler || ''}</span>
+                        <span>${t.receiverLabel}：${form.receiver || ''}</span>
+                    </div>
+                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${form.remark || ''}</p>
+                </div>`;
+            };
+
+            const inboundA4PreviewHtml = computed(() => {
+                const mockItems = [{
+                    productName: '示例物料',
+                    specification: '规格A',
+                    unit: '件',
+                    inboundQty: 10,
+                    price: 12.5,
+                    inboundAmount: 125,
+                    supplier: '示例供应商',
+                    remark: '示例备注'
+                }];
+                const form = {
+                    docNo: previewInboundDocNo.value,
+                    date: new Date().toISOString().substring(0, 10),
+                    supplier: '示例供应商',
+                    handler: '张三',
+                    approver: '李四',
+                    remark: '模板预览'
+                };
+                return buildInboundDocHtml(mockItems, form);
+            });
+
+            const outboundA4PreviewHtml = computed(() => {
+                const mockItems = [{
+                    productName: '示例物料',
+                    specification: '规格B',
+                    unit: '箱',
+                    outboundQty: 6,
+                    price: 20,
+                    outboundAmount: 120,
+                    purpose: '项目领用',
+                    supplier: '示例供应商',
+                    remark: '示例备注'
+                }];
+                const form = {
+                    docNo: previewOutboundDocNo.value,
+                    date: new Date().toISOString().substring(0, 10),
+                    department: '生产部',
+                    handler: '王五',
+                    receiver: '赵六',
+                    remark: '模板预览'
+                };
+                return buildOutboundDocHtml(mockItems, form);
+            });
+
+            const inboundLivePreviewHtml = computed(() => {
+                const selected = pickSelectedRows(inboundData.value, inboundTemplateForm.value.selectedIds || []);
+                const items = selected.length ? selected : [{ productName: '请先选择入库记录', inboundQty: '', inboundAmount: '' }];
+                return buildInboundDocHtml(items, {
+                    docNo: inboundTemplateForm.value.docNo || previewInboundDocNo.value,
+                    date: inboundTemplateForm.value.date || new Date().toISOString().substring(0, 10),
+                    supplier: inboundTemplateForm.value.supplier || '',
+                    handler: currentUser.value.username || '',
+                    approver: inboundTemplateForm.value.approver || '',
+                    remark: inboundTemplateForm.value.remark || ''
+                });
+            });
+
+            const outboundLivePreviewHtml = computed(() => {
+                const selected = pickSelectedRows(outboundData.value, outboundTemplateForm.value.selectedIds || []);
+                const items = selected.length ? selected : [{ productName: '请先选择出库记录', outboundQty: '', outboundAmount: '' }];
+                return buildOutboundDocHtml(items, {
+                    docNo: outboundTemplateForm.value.docNo || previewOutboundDocNo.value,
+                    date: outboundTemplateForm.value.date || new Date().toISOString().substring(0, 10),
+                    department: outboundTemplateForm.value.department || '',
+                    handler: currentUser.value.username || '',
+                    receiver: outboundTemplateForm.value.receiver || '',
+                    remark: outboundTemplateForm.value.remark || ''
+                });
+            });
+
+            const moveField = (type, fromIndex, toIndex) => {
+                if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+                const source = type === 'inbound' ? inboundFieldOptions.value : outboundFieldOptions.value;
+                if (fromIndex >= source.length || toIndex >= source.length) return;
+                const moved = source.splice(fromIndex, 1)[0];
+                source.splice(toIndex, 0, moved);
+            };
+
+            const onFieldDragStart = (type, index) => {
+                if (type === 'inbound') draggingInboundIndex.value = index;
+                else draggingOutboundIndex.value = index;
+            };
+
+            const onFieldDrop = (type, index) => {
+                if (type === 'inbound' && draggingInboundIndex.value !== null) {
+                    moveField(type, draggingInboundIndex.value, index);
+                    draggingInboundIndex.value = null;
+                }
+                if (type === 'outbound' && draggingOutboundIndex.value !== null) {
+                    moveField(type, draggingOutboundIndex.value, index);
+                    draggingOutboundIndex.value = null;
+                }
+            };
+
+            const renderPdfFromHtml = async (html, filename) => {
+                const tempWrap = document.createElement('div');
+                tempWrap.style.position = 'fixed';
+                tempWrap.style.left = '-100000px';
+                tempWrap.style.top = '0';
+                tempWrap.style.width = '794px';
+                tempWrap.style.background = '#fff';
+                tempWrap.style.pointerEvents = 'none';
+                tempWrap.style.zIndex = '-1';
+                tempWrap.innerHTML = html;
+                document.body.appendChild(tempWrap);
+
+                try {
+                    if (!window.html2canvas) {
+                        throw new Error('html2canvas 未加载');
+                    }
+                    const JsPdfCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+                    if (!JsPdfCtor) {
+                        throw new Error('jsPDF 未加载');
+                    }
+                    if (document.fonts && document.fonts.ready) {
+                        await document.fonts.ready;
+                    }
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+                    const canvas = await html2canvas(tempWrap, {
+                        scale: 2,
+                        useCORS: true,
+                        backgroundColor: '#ffffff',
+                        scrollX: 0,
+                        scrollY: 0,
+                        windowWidth: tempWrap.scrollWidth,
+                        windowHeight: tempWrap.scrollHeight
+                    });
+
+                    const pdf = new JsPdfCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+                    const pageWidth = 210;
+                    const pageHeight = 297;
+                    const imgWidth = pageWidth;
+                    const imgHeight = canvas.height * imgWidth / canvas.width;
+                    const imgData = canvas.toDataURL('image/jpeg', 0.98);
+
+                    let heightLeft = imgHeight;
+                    let position = 0;
+                    pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+                    heightLeft -= pageHeight;
+                    while (heightLeft > 0) {
+                        position = heightLeft - imgHeight;
+                        pdf.addPage();
+                        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+                        heightLeft -= pageHeight;
+                    }
+
+                    pdf.save(getSafePdfFileName(filename) + '.pdf');
+                } finally {
+                    if (tempWrap.parentNode) tempWrap.parentNode.removeChild(tempWrap);
+                }
+            };
+
             // 加载模板配置
             const loadTemplates = () => {
-                const savedInbound = localStorage.getItem('wms_inbound_template');
-                const savedOutbound = localStorage.getItem('wms_outbound_template');
-                const savedInboundFields = localStorage.getItem('wms_inbound_fields');
-                const savedOutboundFields = localStorage.getItem('wms_outbound_fields');
-                if (savedInbound) inboundTemplate.value = JSON.parse(savedInbound);
-                if (savedOutbound) outboundTemplate.value = JSON.parse(savedOutbound);
-                if (savedInboundFields) inboundFieldOptions.value = JSON.parse(savedInboundFields);
-                if (savedOutboundFields) outboundFieldOptions.value = JSON.parse(savedOutboundFields);
+                axios.get('/api/template/default', { params: { type: 'inbound' } }).then(res => {
+                    const tpl = res.data && res.data.code === 200 ? res.data.data : null;
+                    if (tpl) {
+                        inboundTemplateId.value = tpl.id;
+                        inboundTemplate.value = normalizeTemplate({
+                            prefix: tpl.prefix || '入',
+                            dateFormat: tpl.dateFormat || 'YYYYMMDD',
+                            seqLength: tpl.seqLength || 4,
+                            title: tpl.title || '入库单',
+                            companyName: tpl.companyName || '',
+                            handlerLabel: '经办人',
+                            approverLabel: '审核人',
+                            remarkLabel: '备注'
+                        }, 'inbound');
+                        if (tpl.footerConfig) {
+                            const footer = safeParseJson(tpl.footerConfig, {});
+                            inboundTemplate.value.handlerLabel = footer.handlerLabel || '经办人';
+                            inboundTemplate.value.approverLabel = footer.approverLabel || '审核人';
+                            inboundTemplate.value.remarkLabel = footer.remarkLabel || '备注';
+                        }
+                        if (tpl.fieldConfig) {
+                            inboundFieldOptions.value = normalizeFields(safeParseJson(tpl.fieldConfig, inboundFieldOptions.value), inboundFieldOptions.value);
+                        }
+                    }
+                }).catch(() => {
+                    const savedInbound = localStorage.getItem('wms_inbound_template');
+                    const savedInboundFields = localStorage.getItem('wms_inbound_fields');
+                    if (savedInbound) inboundTemplate.value = normalizeTemplate(safeParseJson(savedInbound, inboundTemplate.value), 'inbound');
+                    if (savedInboundFields) inboundFieldOptions.value = normalizeFields(safeParseJson(savedInboundFields, inboundFieldOptions.value), inboundFieldOptions.value);
+                });
+
+                axios.get('/api/template/default', { params: { type: 'outbound' } }).then(res => {
+                    const tpl = res.data && res.data.code === 200 ? res.data.data : null;
+                    if (tpl) {
+                        outboundTemplateId.value = tpl.id;
+                        outboundTemplate.value = normalizeTemplate({
+                            prefix: tpl.prefix || '出',
+                            dateFormat: tpl.dateFormat || 'YYYYMMDD',
+                            seqLength: tpl.seqLength || 4,
+                            title: tpl.title || '出库单',
+                            companyName: tpl.companyName || '',
+                            handlerLabel: '经办人',
+                            receiverLabel: '领用人',
+                            remarkLabel: '备注'
+                        }, 'outbound');
+                        if (tpl.footerConfig) {
+                            const footer = safeParseJson(tpl.footerConfig, {});
+                            outboundTemplate.value.handlerLabel = footer.handlerLabel || '经办人';
+                            outboundTemplate.value.receiverLabel = footer.receiverLabel || '领用人';
+                            outboundTemplate.value.remarkLabel = footer.remarkLabel || '备注';
+                        }
+                        if (tpl.fieldConfig) {
+                            outboundFieldOptions.value = normalizeFields(safeParseJson(tpl.fieldConfig, outboundFieldOptions.value), outboundFieldOptions.value);
+                        }
+                    }
+                }).catch(() => {
+                    const savedOutbound = localStorage.getItem('wms_outbound_template');
+                    const savedOutboundFields = localStorage.getItem('wms_outbound_fields');
+                    if (savedOutbound) outboundTemplate.value = normalizeTemplate(safeParseJson(savedOutbound, outboundTemplate.value), 'outbound');
+                    if (savedOutboundFields) outboundFieldOptions.value = normalizeFields(safeParseJson(savedOutboundFields, outboundFieldOptions.value), outboundFieldOptions.value);
+                });
             };
             const saveInboundTemplate = () => {
-                localStorage.setItem('wms_inbound_template', JSON.stringify(inboundTemplate.value));
-                localStorage.setItem('wms_inbound_fields', JSON.stringify(inboundFieldOptions.value));
-                ElementPlus.ElMessage.success('入库单模板保存成功');
+                const payload = {
+                    id: inboundTemplateId.value,
+                    templateType: 'inbound',
+                    templateName: inboundTemplate.value.title || '入库单模板',
+                    prefix: inboundTemplate.value.prefix || '入',
+                    dateFormat: inboundTemplate.value.dateFormat || 'YYYYMMDD',
+                    seqLength: inboundTemplate.value.seqLength || 4,
+                    title: inboundTemplate.value.title || '入库单',
+                    companyName: inboundTemplate.value.companyName || '',
+                    layoutType: 'standard',
+                    fieldConfig: JSON.stringify(inboundFieldOptions.value),
+                    footerConfig: JSON.stringify({
+                        handlerLabel: inboundTemplate.value.handlerLabel || '经办人',
+                        approverLabel: inboundTemplate.value.approverLabel || '审核人',
+                        remarkLabel: inboundTemplate.value.remarkLabel || '备注'
+                    }),
+                    isDefault: 1
+                };
+                axios.post('/api/template/save', payload).then(res => {
+                    if (res.data.code === 200) {
+                        localStorage.setItem('wms_inbound_template', JSON.stringify(inboundTemplate.value));
+                        localStorage.setItem('wms_inbound_fields', JSON.stringify(inboundFieldOptions.value));
+                        ElementPlus.ElMessage.success('入库单模板保存成功');
+                        loadTemplates();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '模板保存失败');
+                    }
+                }).catch(() => {
+                    localStorage.setItem('wms_inbound_template', JSON.stringify(inboundTemplate.value));
+                    localStorage.setItem('wms_inbound_fields', JSON.stringify(inboundFieldOptions.value));
+                    ElementPlus.ElMessage.warning('已保存到本地，后端模板服务不可用');
+                });
             };
             const saveOutboundTemplate = () => {
-                localStorage.setItem('wms_outbound_template', JSON.stringify(outboundTemplate.value));
-                localStorage.setItem('wms_outbound_fields', JSON.stringify(outboundFieldOptions.value));
-                ElementPlus.ElMessage.success('出库单模板保存成功');
+                const payload = {
+                    id: outboundTemplateId.value,
+                    templateType: 'outbound',
+                    templateName: outboundTemplate.value.title || '出库单模板',
+                    prefix: outboundTemplate.value.prefix || '出',
+                    dateFormat: outboundTemplate.value.dateFormat || 'YYYYMMDD',
+                    seqLength: outboundTemplate.value.seqLength || 4,
+                    title: outboundTemplate.value.title || '出库单',
+                    companyName: outboundTemplate.value.companyName || '',
+                    layoutType: 'standard',
+                    fieldConfig: JSON.stringify(outboundFieldOptions.value),
+                    footerConfig: JSON.stringify({
+                        handlerLabel: outboundTemplate.value.handlerLabel || '经办人',
+                        receiverLabel: outboundTemplate.value.receiverLabel || '领用人',
+                        remarkLabel: outboundTemplate.value.remarkLabel || '备注'
+                    }),
+                    isDefault: 1
+                };
+                axios.post('/api/template/save', payload).then(res => {
+                    if (res.data.code === 200) {
+                        localStorage.setItem('wms_outbound_template', JSON.stringify(outboundTemplate.value));
+                        localStorage.setItem('wms_outbound_fields', JSON.stringify(outboundFieldOptions.value));
+                        ElementPlus.ElMessage.success('出库单模板保存成功');
+                        loadTemplates();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '模板保存失败');
+                    }
+                }).catch(() => {
+                    localStorage.setItem('wms_outbound_template', JSON.stringify(outboundTemplate.value));
+                    localStorage.setItem('wms_outbound_fields', JSON.stringify(outboundFieldOptions.value));
+                    ElementPlus.ElMessage.warning('已保存到本地，后端模板服务不可用');
+                });
             };
             const resetInboundTemplate = () => {
-                inboundTemplate.value = { prefix: 'RK', dateFormat: 'YYYYMMDD', seqLength: 4, title: '入库单', companyName: '', handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注' };
+                inboundTemplate.value = { prefix: '入', dateFormat: 'YYYYMMDD', seqLength: 4, title: '入库单', companyName: '', handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注' };
                 inboundFieldOptions.value = [
-                    { key: 'id', label: 'ID', checked: true }, { key: 'productName', label: '品名', checked: true },
+                    { key: 'id', label: '序号', checked: true }, { key: 'productName', label: '品名', checked: true },
                     { key: 'specification', label: '规格型号', checked: true }, { key: 'unit', label: '单位', checked: true },
                     { key: 'inboundQty', label: '数量', checked: true }, { key: 'price', label: '单价', checked: true },
                     { key: 'inboundAmount', label: '金额', checked: true }, { key: 'supplier', label: '供应商', checked: false },
@@ -921,9 +1519,9 @@
                 ElementPlus.ElMessage.success('入库单模板已恢复默认');
             };
             const resetOutboundTemplate = () => {
-                outboundTemplate.value = { prefix: 'CK', dateFormat: 'YYYYMMDD', seqLength: 4, title: '出库单', companyName: '', handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注' };
+                outboundTemplate.value = { prefix: '出', dateFormat: 'YYYYMMDD', seqLength: 4, title: '出库单', companyName: '', handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注' };
                 outboundFieldOptions.value = [
-                    { key: 'id', label: 'ID', checked: true }, { key: 'productName', label: '品名', checked: true },
+                    { key: 'id', label: '序号', checked: true }, { key: 'productName', label: '品名', checked: true },
                     { key: 'specification', label: '规格型号', checked: true }, { key: 'unit', label: '单位', checked: true },
                     { key: 'outboundQty', label: '数量', checked: true }, { key: 'price', label: '单价', checked: true },
                     { key: 'outboundAmount', label: '金额', checked: true }, { key: 'purpose', label: '用途', checked: true },
@@ -949,6 +1547,8 @@
             const inboundTemplateForm = ref({ docNo: '', date: '', supplier: '', selectedIds: [], handler: '', remark: '' });
             const outboundTemplateDialogVisible = ref(false);
             const outboundTemplateForm = ref({ docNo: '', date: '', department: '', selectedIds: [], handler: '', remark: '' });
+            const inboundPreviewScale = ref(0.6);
+            const outboundPreviewScale = ref(0.6);
 
             const selectedInventoryStock = ref(99999);
 
@@ -1082,22 +1682,55 @@
             const totalInventoryAmount = computed(() => {
                 return inventoryData.value.reduce((sum, item) => sum + (parseFloat(item.stockAmount) || 0), 0).toFixed(2);
             });
+            const totalOverviewInAmount = computed(() => {
+                return overviewData.value.reduce((sum, item) => {
+                    let rowSum = 0;
+                    for (let m = 1; m <= 12; m++) rowSum += parseFloat(item['m' + m + 'InAmount'] || 0);
+                    return sum + rowSum;
+                }, 0).toFixed(2);
+            });
+            const totalOverviewOutAmount = computed(() => {
+                return overviewData.value.reduce((sum, item) => {
+                    let rowSum = 0;
+                    for (let m = 1; m <= 12; m++) rowSum += parseFloat(item['m' + m + 'OutAmount'] || 0);
+                    return sum + rowSum;
+                }, 0).toFixed(2);
+            });
 
             // API 调用
             const fetchDashboard = () => { axios.get('/api/inventory/warnings').then(res => { if(res.data.code === 200) { alertTotal.value = res.data.data; alertData.value = [...(res.data.data.lessThanFive||[]), ...(res.data.data.equalsZero||[]), ...(res.data.data.lessThanZero||[])]; } }).catch(err => console.error(err)) };
-            const fetchInbound = () => { axios.get('/api/inbound/list').then(res => { if(res.data.code === 200) inboundData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
-            const fetchOutbound = () => { axios.get('/api/outbound/list').then(res => { if(res.data.code === 200) outboundData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchInbound = () => {
+                return axios.get('/api/inbound/list').then(res => {
+                    if (res.data.code === 200) inboundData.value = res.data.data.list || res.data.data || [];
+                }).catch(err => console.error(err));
+            };
+            const fetchOutbound = () => {
+                return axios.get('/api/outbound/list').then(res => {
+                    if (res.data.code === 200) outboundData.value = res.data.data.list || res.data.data || [];
+                }).catch(err => console.error(err));
+            };
             const fetchInventory = () => { axios.get('/api/inventory/list').then(res => { if(res.data.code === 200) inventoryData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
             const fetchOverview = () => { axios.get('/api/overview/year').then(res => { if(res.data.code === 200) overviewData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
             const fetchUserManager = () => { axios.get('/api/user/list').then(res => { if(res.data.code === 200) userData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
-            const fetchInventoryOptions = () => { axios.get('/api/inventory/options').then(res => { if(res.data.code === 200) inventoryOptions.value = res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchInventoryOptions = () => {
+                return axios.get('/api/inventory/options').then(res => {
+                    if(res.data.code === 200) inventoryOptions.value = res.data.data || [];
+                }).catch(err => console.error(err));
+            };
 
             const fetchBasicInfo = () => {
                 loadingBasicInfo.value = true;
-                axios.get('/api/basicInfo/list').then(res => {
+                return axios.get('/api/basicInfo/list').then(res => {
                     if(res.data.code === 200) {
-                        basicInfoData.value = res.data.data.list;
-                        totalBasicAmount.value = res.data.data.totalAmount ? parseFloat(res.data.data.totalAmount).toFixed(2) : "0.00";
+                        const payload = res.data.data;
+                        const list = Array.isArray(payload)
+                            ? payload
+                            : Array.isArray(payload && payload.list)
+                                ? payload.list
+                                : [];
+                        basicInfoData.value = list;
+                        const amount = payload && payload.totalAmount;
+                        totalBasicAmount.value = amount ? parseFloat(amount).toFixed(2) : "0.00";
                     }
                 }).catch(err => {}).finally(() => { loadingBasicInfo.value = false; });
             };
@@ -1116,8 +1749,8 @@
                 activeMenu.value = index;
                 if(index === 'BasicInfo') fetchBasicInfo();
                 else if(index === 'Dashboard') fetchDashboard();
-                else if(index === 'Inbound') { fetchInbound(); fetchInventoryOptions(); }
-                else if(index === 'Outbound') { fetchOutbound(); fetchInventoryOptions(); }
+                else if(index === 'Inbound') { fetchInbound(); fetchInventoryOptions(); fetchBasicInfo(); }
+                else if(index === 'Outbound') { fetchOutbound(); fetchInventoryOptions(); fetchBasicInfo(); }
                 else if(index === 'Inventory') fetchInventory();
                 else if(index === 'Overview') fetchOverview();
                 else if(index === 'UserManager') fetchUserManager();
@@ -1168,14 +1801,78 @@
             };
 
             // 入库操作
-            const openInboundDialog = (row) => {
-                fetchInventoryOptions();
+            const formatOptionDetail = (item, source) => {
+                if (!item) return '';
+                const spec = item.specification || '-';
+                const price = item.price || 0;
+                const supplier = item.supplier || '-';
+                const unit = item.unit || '-';
+                if (source === 'inv') {
+                    const stock = item.currentStockQty || 0;
+                    return `来源:库存 | 规格:${spec} | 单价:${price} | 单位:${unit} | 供应商:${supplier} | 库存:${stock}`;
+                }
+                return `来源:基础信息 | 规格:${spec} | 单价:${price} | 单位:${unit} | 供应商:${supplier}`;
+            };
+
+            const onInboundBatchItemChange = (row) => {
+                const token = row && row.itemToken ? String(row.itemToken) : '';
+                if (!token) {
+                    row.itemDetail = '';
+                    return;
+                }
+                if (token.startsWith('inv:')) {
+                    const id = parseInt(token.split(':')[1], 10);
+                    const item = inventoryOptions.value.find(x => Number(x.id) === id);
+                    row.itemDetail = formatOptionDetail(item, 'inv');
+                    return;
+                }
+                if (token.startsWith('basic:')) {
+                    const id = parseInt(token.split(':')[1], 10);
+                    const item = basicInfoData.value.find(x => Number(x.id) === id);
+                    row.itemDetail = formatOptionDetail(item, 'basic');
+                    return;
+                }
+                row.itemDetail = `来源:自定义输入 | 名称:${token}`;
+            };
+
+            const onOutboundBatchItemChange = (row) => {
+                const token = row && row.itemToken ? String(row.itemToken) : '';
+                if (!token) {
+                    row.itemDetail = '';
+                    return;
+                }
+                if (token.startsWith('inv:')) {
+                    const id = parseInt(token.split(':')[1], 10);
+                    const item = inventoryOptions.value.find(x => Number(x.id) === id);
+                    row.itemDetail = formatOptionDetail(item, 'inv');
+                    return;
+                }
+                if (token.startsWith('basic:')) {
+                    const id = parseInt(token.split(':')[1], 10);
+                    const item = basicInfoData.value.find(x => Number(x.id) === id);
+                    row.itemDetail = formatOptionDetail(item, 'basic');
+                    return;
+                }
+                row.itemDetail = `来源:自定义输入 | 名称:${token}`;
+            };
+
+            const openInboundDialog = async (row) => {
+                await Promise.all([fetchInventoryOptions(), fetchBasicInfo()]);
                 if (row) {
-                    inboundForm.value = { ...row, inboundDate: row.inboundDate ? row.inboundDate.substring(0, 10) : '' };
+                    inboundForm.value = { ...row, inboundDate: row.inboundDate ? row.inboundDate.substring(0, 10) : '', operator: currentUser.value.username };
+                    inboundBatchRows.value = [];
                 } else {
-                    inboundForm.value = { inventoryId: null, inboundDate: new Date().toISOString().substring(0, 10), inboundQty: 1, remark: '' };
+                    inboundForm.value = { id: null, inboundDate: new Date().toISOString().substring(0, 10), operator: currentUser.value.username };
+                    inboundBatchRows.value = [{ itemToken: '', itemDetail: '', inboundQty: 1, remark: '' }];
                 }
                 inboundDialogVisible.value = true;
+            };
+            const addInboundBatchRow = () => {
+                inboundBatchRows.value.push({ itemToken: '', itemDetail: '', inboundQty: 1, remark: '' });
+            };
+            const removeInboundBatchRow = (index) => {
+                inboundBatchRows.value.splice(index, 1);
+                if (inboundBatchRows.value.length === 0) addInboundBatchRow();
             };
             const onInboundInventoryChange = (val) => {
                 const item = inventoryOptions.value.find(i => i.id === val);
@@ -1183,21 +1880,106 @@
                     inboundForm.value.productName = item.productName;
                 }
             };
-            const submitInbound = () => {
-                if (!inboundForm.value.inventoryId || !inboundForm.value.inboundDate || !inboundForm.value.inboundQty) {
-                    ElementPlus.ElMessage.error('请填写完整信息'); return;
+            const createInventoryFromPayload = async (payload) => {
+                const res = await axios.post('/api/inventory/save', payload);
+                if (res.data.code !== 200) throw new Error(res.data.msg || '库存物品创建失败');
+                const data = res.data.data || {};
+                if (data.id) return data.id;
+                await fetchInventoryOptions();
+                const hit = inventoryOptions.value.find(i => i.productName === payload.productName && (i.specification || '') === (payload.specification || ''));
+                if (!hit) throw new Error('无法定位新建库存物品');
+                return hit.id;
+            };
+
+            const resolveItemTokenToInventoryId = async (token) => {
+                if (!token) throw new Error('请选择或输入物品');
+                if (String(token).startsWith('inv:')) return parseInt(String(token).split(':')[1], 10);
+
+                if (String(token).startsWith('basic:')) {
+                    const basicId = parseInt(String(token).split(':')[1], 10);
+                    const basic = basicInfoData.value.find(x => Number(x.id) === basicId);
+                    if (!basic) throw new Error('基础信息物品不存在');
+                    const existed = inventoryOptions.value.find(i => i.productName === basic.productName && (i.specification || '') === (basic.specification || ''));
+                    if (existed) return existed.id;
+                    return await createInventoryFromPayload({
+                        productName: basic.productName,
+                        price: parseFloat(basic.price || 0),
+                        specification: basic.specification || '',
+                        supplier: basic.supplier || '',
+                        unit: basic.unit || '',
+                        initStockQty: 0,
+                        safeStockQty: 5,
+                        remark: '由基础信息自动创建'
+                    });
                 }
-                const url = inboundForm.value.id ? '/api/inbound/update' : '/api/inbound/add';
-                const method = inboundForm.value.id ? 'put' : 'post';
-                axios[method](url, inboundForm.value).then(res => {
-                    if (res.data.code === 200) {
-                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
-                        inboundDialogVisible.value = false;
-                        fetchInbound(); fetchInventory(); fetchInventoryOptions();
-                    } else {
-                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+
+                const customName = String(token).trim();
+                if (!customName) throw new Error('请输入有效物品名称');
+                const byName = inventoryOptions.value.find(i => i.productName === customName);
+                if (byName) return byName.id;
+                return await createInventoryFromPayload({
+                    productName: customName,
+                    price: 0,
+                    specification: '',
+                    supplier: '',
+                    unit: '',
+                    initStockQty: 0,
+                    safeStockQty: 5,
+                    remark: '由入库/出库自定义输入创建'
+                });
+            };
+
+            const submitInbound = async () => {
+                if (inboundForm.value.id) {
+                    if (!inboundForm.value.inventoryId || !inboundForm.value.inboundDate || !inboundForm.value.inboundQty) {
+                        ElementPlus.ElMessage.error('请填写完整信息'); return;
                     }
-                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+                    axios.put('/api/inbound/update', { ...inboundForm.value, operator: currentUser.value.username }).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success((res.data.data && res.data.data.message) || res.data.data || '操作成功');
+                            inboundDialogVisible.value = false;
+                            fetchInbound(); fetchInventory(); fetchInventoryOptions();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                        }
+                    }).catch(() => ElementPlus.ElMessage.error('请求失败'));
+                    return;
+                }
+
+                if (!inboundForm.value.inboundDate) {
+                    ElementPlus.ElMessage.error('请先选择入库日期');
+                    return;
+                }
+                const rows = inboundBatchRows.value.filter(r => r.itemToken && r.inboundQty > 0);
+                if (!rows.length) {
+                    ElementPlus.ElMessage.error('请至少填写一条有效入库记录');
+                    return;
+                }
+
+                const createdIds = [];
+                try {
+                    for (const row of rows) {
+                        const inventoryId = await resolveItemTokenToInventoryId(row.itemToken);
+                        const res = await axios.post('/api/inbound/add', {
+                            inventoryId,
+                            inboundQty: row.inboundQty,
+                            remark: row.remark,
+                            inboundDate: inboundForm.value.inboundDate,
+                            operator: currentUser.value.username
+                        });
+                        if (res.data.code !== 200) {
+                            throw new Error(res.data.msg || '入库失败');
+                        }
+                        if (res.data.data && res.data.data.id) createdIds.push(res.data.data.id);
+                    }
+                    ElementPlus.ElMessage.success('已新增 ' + rows.length + ' 条入库记录');
+                    inboundDialogVisible.value = false;
+                    await fetchInbound();
+                    fetchInventory(); fetchInventoryOptions();
+                    openInboundTemplateDialog(createdIds);
+                } catch (e) {
+                    ElementPlus.ElMessage.error(e.message || '批量入库失败');
+                }
             };
             const deleteInbound = (row) => {
                 ElementPlus.ElMessageBox.confirm('确定要删除该入库记录吗？删除后库存将自动扣减。', '提示', { type: 'warning' }).then(() => {
@@ -1213,17 +1995,26 @@
             };
 
             // 出库操作
-            const openOutboundDialog = (row) => {
-                fetchInventoryOptions();
+            const openOutboundDialog = async (row) => {
+                await Promise.all([fetchInventoryOptions(), fetchBasicInfo()]);
                 if (row) {
-                    outboundForm.value = { ...row, outboundDate: row.outboundDate ? row.outboundDate.substring(0, 10) : '' };
+                    outboundForm.value = { ...row, outboundDate: row.outboundDate ? row.outboundDate.substring(0, 10) : '', operator: currentUser.value.username };
+                    outboundBatchRows.value = [];
                     const item = inventoryOptions.value.find(i => i.id === row.inventoryId);
                     selectedInventoryStock.value = item ? item.currentStockQty + (row.outboundQty || 0) : 99999;
                 } else {
-                    outboundForm.value = { inventoryId: null, outboundDate: new Date().toISOString().substring(0, 10), outboundQty: 1, purpose: '', remark: '' };
+                    outboundForm.value = { id: null, outboundDate: new Date().toISOString().substring(0, 10), operator: currentUser.value.username };
+                    outboundBatchRows.value = [{ itemToken: '', itemDetail: '', outboundQty: 1, purpose: '', remark: '' }];
                     selectedInventoryStock.value = 99999;
                 }
                 outboundDialogVisible.value = true;
+            };
+            const addOutboundBatchRow = () => {
+                outboundBatchRows.value.push({ itemToken: '', itemDetail: '', outboundQty: 1, purpose: '', remark: '' });
+            };
+            const removeOutboundBatchRow = (index) => {
+                outboundBatchRows.value.splice(index, 1);
+                if (outboundBatchRows.value.length === 0) addOutboundBatchRow();
             };
             const onOutboundInventoryChange = (val) => {
                 const item = inventoryOptions.value.find(i => i.id === val);
@@ -1232,21 +2023,58 @@
                     selectedInventoryStock.value = item.currentStockQty;
                 }
             };
-            const submitOutbound = () => {
-                if (!outboundForm.value.inventoryId || !outboundForm.value.outboundDate || !outboundForm.value.outboundQty) {
-                    ElementPlus.ElMessage.error('请填写完整信息'); return;
-                }
-                const url = outboundForm.value.id ? '/api/outbound/update' : '/api/outbound/add';
-                const method = outboundForm.value.id ? 'put' : 'post';
-                axios[method](url, outboundForm.value).then(res => {
-                    if (res.data.code === 200) {
-                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
-                        outboundDialogVisible.value = false;
-                        fetchOutbound(); fetchInventory(); fetchInventoryOptions();
-                    } else {
-                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+            const submitOutbound = async () => {
+                if (outboundForm.value.id) {
+                    if (!outboundForm.value.inventoryId || !outboundForm.value.outboundDate || !outboundForm.value.outboundQty) {
+                        ElementPlus.ElMessage.error('请填写完整信息'); return;
                     }
-                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+                    axios.put('/api/outbound/update', { ...outboundForm.value, operator: currentUser.value.username }).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success((res.data.data && res.data.data.message) || res.data.data || '操作成功');
+                            outboundDialogVisible.value = false;
+                            fetchOutbound(); fetchInventory(); fetchInventoryOptions();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                        }
+                    }).catch(() => ElementPlus.ElMessage.error('请求失败'));
+                    return;
+                }
+
+                if (!outboundForm.value.outboundDate) {
+                    ElementPlus.ElMessage.error('请先选择出库日期');
+                    return;
+                }
+                const rows = outboundBatchRows.value.filter(r => r.itemToken && r.outboundQty > 0);
+                if (!rows.length) {
+                    ElementPlus.ElMessage.error('请至少填写一条有效出库记录');
+                    return;
+                }
+
+                const createdIds = [];
+                try {
+                    for (const row of rows) {
+                        const inventoryId = await resolveItemTokenToInventoryId(row.itemToken);
+                        const res = await axios.post('/api/outbound/add', {
+                            inventoryId,
+                            outboundQty: row.outboundQty,
+                            purpose: row.purpose,
+                            remark: row.remark,
+                            outboundDate: outboundForm.value.outboundDate,
+                            operator: currentUser.value.username
+                        });
+                        if (res.data.code !== 200) {
+                            throw new Error(res.data.msg || '出库失败');
+                        }
+                        if (res.data.data && res.data.data.id) createdIds.push(res.data.data.id);
+                    }
+                    ElementPlus.ElMessage.success('已新增 ' + rows.length + ' 条出库记录');
+                    outboundDialogVisible.value = false;
+                    await fetchOutbound();
+                    fetchInventory(); fetchInventoryOptions();
+                    openOutboundTemplateDialog(createdIds);
+                } catch (e) {
+                    ElementPlus.ElMessage.error(e.message || '批量出库失败');
+                }
             };
             const deleteOutbound = (row) => {
                 ElementPlus.ElMessageBox.confirm('确定要删除该出库记录吗？删除后库存将自动恢复。', '提示', { type: 'warning' }).then(() => {
@@ -1281,6 +2109,18 @@
                         ElementPlus.ElMessage.error(res.data.msg || '操作失败');
                     }
                 }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+            const deleteInventory = (row) => {
+                ElementPlus.ElMessageBox.confirm('确定要删除该库存物品吗？', '提示', { type: 'warning' }).then(() => {
+                    axios.delete('/api/inventory/delete/' + row.id).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('删除成功');
+                            fetchInventory(); fetchInventoryOptions();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '删除失败');
+                        }
+                    });
+                }).catch(() => {});
             };
 
             // 用户审核操作
@@ -1385,17 +2225,23 @@
             };
 
             // 入库单模板
-            const openInboundTemplateDialog = () => {
-                loadTemplates();
+            const openInboundTemplateDialog = (presetIds = []) => {
+                try { loadTemplates(); } catch (_) {}
                 inboundTemplateForm.value = {
                     docNo: generateDocNo('inbound'),
                     date: new Date().toISOString().substring(0, 10),
-                    supplier: '', selectedIds: [], handler: currentUser.value.username, remark: '', approver: ''
+                    supplier: '', selectedIds: presetIds, handler: currentUser.value.username, remark: '', approver: ''
                 };
                 inboundTemplateDialogVisible.value = true;
             };
+            const safeOpenInboundTemplateDialog = async (presetIds = []) => {
+                openInboundTemplateDialog(presetIds);
+                Promise.all([fetchInbound(), fetchInventoryOptions(), fetchBasicInfo()]).catch(() => {
+                    ElementPlus.ElMessage.warning('数据刷新失败，已打开单据窗口');
+                });
+            };
             const generateInboundExcel = () => {
-                const selectedItems = inboundData.value.filter(item => inboundTemplateForm.value.selectedIds.includes(item.id));
+                const selectedItems = pickSelectedRows(inboundData.value, inboundTemplateForm.value.selectedIds);
                 if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择入库记录'); return; }
                 const t = inboundTemplate.value;
                 const fields = inboundFieldOptions.value.filter(f => f.checked);
@@ -1419,67 +2265,46 @@
                 inboundTemplateDialogVisible.value = false;
             };
             const generateInboundPdf = () => {
-                const selectedItems = inboundData.value.filter(item => inboundTemplateForm.value.selectedIds.includes(item.id));
+                const selectedItems = pickSelectedRows(inboundData.value, inboundTemplateForm.value.selectedIds);
                 if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择入库记录'); return; }
                 const t = inboundTemplate.value;
-                const fields = inboundFieldOptions.value.filter(f => f.checked);
-                const total = selectedItems.reduce((sum, item) => sum + parseFloat(item.inboundAmount || 0), 0).toFixed(2);
-
-                let html = `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 20px; width: 750px;">
-                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
-                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
-                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
-                        <span>单据编号：${inboundTemplateForm.value.docNo}</span>
-                        <span>日期：${inboundTemplateForm.value.date}</span>
-                    </div>
-                    <p style="font-size: 14px; margin: 10px 0;">供应商：${inboundTemplateForm.value.supplier || ''}</p>
-                    <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px;">
-                        <thead><tr style="background-color: #f0f0f0;">
-                            ${fields.map(f => `<th style="border: 1px solid #333; padding: 8px;">${f.label}</th>`).join('')}
-                        </tr></thead>
-                        <tbody>
-                            ${selectedItems.map((item, idx) => `<tr>
-                                ${fields.map(f => `<td style="border: 1px solid #333; padding: 6px; text-align: center;">${f.key === 'id' ? idx + 1 : item[f.key] || ''}</td>`).join('')}
-                            </tr>`).join('')}
-                        </tbody>
-                    </table>
-                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
-                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
-                        <span>${t.handlerLabel}：${inboundTemplateForm.value.handler}</span>
-                        <span>${t.approverLabel}：${inboundTemplateForm.value.approver || ''}</span>
-                    </div>
-                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${inboundTemplateForm.value.remark || ''}</p>
-                </div>`;
-
-                const container = document.getElementById('pdfContainer');
-                container.innerHTML = html;
-                container.style.left = '0';
-
-                html2pdf().set({
-                    margin: 10, filename: t.title + '_' + inboundTemplateForm.value.docNo + '.pdf',
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2, useCORS: true },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-                }).from(container).save().then(() => {
-                    container.style.left = '-9999px';
-                    container.innerHTML = '';
+                const html = buildInboundDocHtml(selectedItems, inboundTemplateForm.value);
+                const fileBaseName = `${t.title}_${inboundTemplateForm.value.docNo}`;
+                renderPdfFromHtml(html, fileBaseName).then(() => {
                     inboundTemplateDialogVisible.value = false;
                     ElementPlus.ElMessage.success('PDF生成成功');
+                }).catch(() => {
+                    ElementPlus.ElMessage.error('PDF生成失败，请稍后重试');
                 });
             };
 
             // 出库单模板
-            const openOutboundTemplateDialog = () => {
-                loadTemplates();
+            const openOutboundTemplateDialog = (presetIds = []) => {
+                try { loadTemplates(); } catch (_) {}
                 outboundTemplateForm.value = {
                     docNo: generateDocNo('outbound'),
                     date: new Date().toISOString().substring(0, 10),
-                    department: '', selectedIds: [], handler: currentUser.value.username, remark: '', receiver: ''
+                    department: '', selectedIds: presetIds, handler: currentUser.value.username, remark: '', receiver: ''
                 };
                 outboundTemplateDialogVisible.value = true;
             };
+            const safeOpenOutboundTemplateDialog = async (presetIds = []) => {
+                openOutboundTemplateDialog(presetIds);
+                Promise.all([fetchOutbound(), fetchInventoryOptions(), fetchBasicInfo()]).catch(() => {
+                    ElementPlus.ElMessage.warning('数据刷新失败，已打开单据窗口');
+                });
+            };
+
+            const onTemplateButtonClick = (type) => {
+                ElementPlus.ElMessage.info(type === 'outbound' ? '已触发: 生成出库单按钮' : '已触发: 生成入库单按钮');
+                if (type === 'outbound') {
+                    safeOpenOutboundTemplateDialog();
+                } else {
+                    safeOpenInboundTemplateDialog();
+                }
+            };
             const generateOutboundExcel = () => {
-                const selectedItems = outboundData.value.filter(item => outboundTemplateForm.value.selectedIds.includes(item.id));
+                const selectedItems = pickSelectedRows(outboundData.value, outboundTemplateForm.value.selectedIds);
                 if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择出库记录'); return; }
                 const t = outboundTemplate.value;
                 const fields = outboundFieldOptions.value.filter(f => f.checked);
@@ -1503,59 +2328,23 @@
                 outboundTemplateDialogVisible.value = false;
             };
             const generateOutboundPdf = () => {
-                const selectedItems = outboundData.value.filter(item => outboundTemplateForm.value.selectedIds.includes(item.id));
+                const selectedItems = pickSelectedRows(outboundData.value, outboundTemplateForm.value.selectedIds);
                 if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择出库记录'); return; }
                 const t = outboundTemplate.value;
-                const fields = outboundFieldOptions.value.filter(f => f.checked);
-                const total = selectedItems.reduce((sum, item) => sum + parseFloat(item.outboundAmount || 0), 0).toFixed(2);
-
-                let html = `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 20px; width: 750px;">
-                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
-                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
-                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
-                        <span>单据编号：${outboundTemplateForm.value.docNo}</span>
-                        <span>日期：${outboundTemplateForm.value.date}</span>
-                    </div>
-                    <p style="font-size: 14px; margin: 10px 0;">领用部门：${outboundTemplateForm.value.department || ''}</p>
-                    <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px;">
-                        <thead><tr style="background-color: #f0f0f0;">
-                            ${fields.map(f => `<th style="border: 1px solid #333; padding: 8px;">${f.label}</th>`).join('')}
-                        </tr></thead>
-                        <tbody>
-                            ${selectedItems.map((item, idx) => `<tr>
-                                ${fields.map(f => `<td style="border: 1px solid #333; padding: 6px; text-align: center;">${f.key === 'id' ? idx + 1 : item[f.key] || ''}</td>`).join('')}
-                            </tr>`).join('')}
-                        </tbody>
-                    </table>
-                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
-                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
-                        <span>${t.handlerLabel}：${outboundTemplateForm.value.handler}</span>
-                        <span>${t.receiverLabel}：${outboundTemplateForm.value.receiver || ''}</span>
-                    </div>
-                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${outboundTemplateForm.value.remark || ''}</p>
-                </div>`;
-
-                const container = document.getElementById('pdfContainer');
-                container.innerHTML = html;
-                container.style.left = '0';
-
-                html2pdf().set({
-                    margin: 10, filename: t.title + '_' + outboundTemplateForm.value.docNo + '.pdf',
-                    image: { type: 'jpeg', quality: 0.98 },
-                    html2canvas: { scale: 2, useCORS: true },
-                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-                }).from(container).save().then(() => {
-                    container.style.left = '-9999px';
-                    container.innerHTML = '';
+                const html = buildOutboundDocHtml(selectedItems, outboundTemplateForm.value);
+                const fileBaseName = `${t.title}_${outboundTemplateForm.value.docNo}`;
+                renderPdfFromHtml(html, fileBaseName).then(() => {
                     outboundTemplateDialogVisible.value = false;
                     ElementPlus.ElMessage.success('PDF生成成功');
+                }).catch(() => {
+                    ElementPlus.ElMessage.error('PDF生成失败，请稍后重试');
                 });
             };
 
             return {
                 activeMenu, currentUser, roleMap, handleMenuSelect, handleCommand,
                 alertData, inboundData, outboundData, inventoryData, overviewData, userData, alertTotal,
-                totalInboundAmount, totalOutboundAmount, totalInventoryAmount,
+                totalInboundAmount, totalOutboundAmount, totalInventoryAmount, totalOverviewInAmount, totalOverviewOutAmount,
                 basicInfoData, totalBasicAmount, loadingBasicInfo, fetchBasicInfo,
                 searchBasicInfo, searchInbound, searchInboundDate, searchOutbound, searchInventory, userFilterType,
                 pageSize, pageSizes,
@@ -1565,19 +2354,25 @@
                 inventoryOptions, selectedInventoryStock,
                 // 对话框
                 basicInfoDialogVisible, basicInfoForm, openBasicInfoDialog, submitBasicInfo, deleteBasicInfo,
-                inboundDialogVisible, inboundForm, openInboundDialog, onInboundInventoryChange, submitInbound, deleteInbound,
-                outboundDialogVisible, outboundForm, openOutboundDialog, onOutboundInventoryChange, submitOutbound, deleteOutbound,
-                inventoryDialogVisible, inventoryForm, openInventoryDialog, submitInventory,
+                inboundDialogVisible, inboundForm, inboundBatchRows, addInboundBatchRow, removeInboundBatchRow, openInboundDialog, onInboundInventoryChange, submitInbound, deleteInbound,
+                outboundDialogVisible, outboundForm, outboundBatchRows, addOutboundBatchRow, removeOutboundBatchRow, openOutboundDialog, onOutboundInventoryChange, submitOutbound, deleteOutbound,
+                onInboundBatchItemChange, onOutboundBatchItemChange,
+                inventoryDialogVisible, inventoryForm, openInventoryDialog, submitInventory, deleteInventory,
                 auditDialogVisible, auditForm, openAuditDialog, submitAudit, auditUser,
                 roleDialogVisible, roleForm, openRoleDialog, submitRoleChange,
                 // 导出
                 exportBasicInfoExcel, exportInboundExcel, exportOutboundExcel, exportInventoryExcel, exportOverviewExcel,
                 // 模板
-                inboundTemplateDialogVisible, inboundTemplateForm, openInboundTemplateDialog, generateInboundExcel, generateInboundPdf,
-                outboundTemplateDialogVisible, outboundTemplateForm, openOutboundTemplateDialog, generateOutboundExcel, generateOutboundPdf,
+                inboundTemplateDialogVisible, inboundTemplateForm, openInboundTemplateDialog, safeOpenInboundTemplateDialog, generateInboundExcel, generateInboundPdf,
+                outboundTemplateDialogVisible, outboundTemplateForm, openOutboundTemplateDialog, safeOpenOutboundTemplateDialog, generateOutboundExcel, generateOutboundPdf,
+                inboundPreviewScale, outboundPreviewScale,
+                onTemplateButtonClick,
                 // 模板管理
                 templateTab, inboundTemplate, outboundTemplate, inboundFieldOptions, outboundFieldOptions,
                 previewInboundDocNo, previewOutboundDocNo, loadTemplates,
+                inboundA4PreviewHtml, outboundA4PreviewHtml,
+                inboundLivePreviewHtml, outboundLivePreviewHtml,
+                onFieldDragStart, onFieldDrop, draggingInboundIndex, draggingOutboundIndex,
                 saveInboundTemplate, saveOutboundTemplate, resetInboundTemplate, resetOutboundTemplate,
                 // 操作日志
                 operationLogs, loadingLogs, logFilter, logPagination, fetchOperationLogs,

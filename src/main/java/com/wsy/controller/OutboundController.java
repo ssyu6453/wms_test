@@ -60,6 +60,7 @@ public class OutboundController {
 
             Map<String, Object> row = new HashMap<>();
             row.put("id", outbound.getId());
+            row.put("inventoryId", outbound.getInventoryId());
             row.put("outboundDate", outbound.getOutboundDate());
             row.put("productName", productName);
             row.put("price", price);
@@ -69,6 +70,8 @@ public class OutboundController {
             row.put("outboundQty", defaultInt(outbound.getOutboundQty()));
             row.put("outboundAmount", safe(outbound.getOutboundAmount()));
             row.put("purpose", outbound.getPurpose());
+            row.put("operator", outbound.getOperator());
+            row.put("createTime", outbound.getCreateTime());
             row.put("remark", outbound.getRemark());
             rows.add(row);
         }
@@ -107,8 +110,12 @@ public class OutboundController {
         inventoryMapper.updateById(inventory);
 
         addLog(user.getUsername(), "ADD", "outbound", "新增出库: " + inventory.getProductName() + " x" + outbound.getOutboundQty(), outbound.getId());
+        addLog(user.getUsername(), "UPDATE", "inventory", "出库导致库存变更: " + inventory.getProductName() + " -" + outbound.getOutboundQty(), inventory.getId());
 
-        return Result.success("出库成功");
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", outbound.getId());
+        result.put("message", "出库成功");
+        return Result.success(result);
     }
 
     @PutMapping("/update")
@@ -152,6 +159,7 @@ public class OutboundController {
                 int currentQty = defaultInt(inventory.getCurrentStockQty()) - outbound.getOutboundQty();
                 inventory.setCurrentStockQty(currentQty);
                 inventoryMapper.updateById(inventory);
+                addLog(user.getUsername(), "UPDATE", "inventory", "出库更新导致库存变更: " + inventory.getProductName() + " -> " + currentQty, inventory.getId());
             }
         }
 
@@ -183,6 +191,9 @@ public class OutboundController {
         }
 
         addLog(user.getUsername(), "DELETE", "outbound", "删除出库: " + outbound.getProductName() + " x" + outbound.getOutboundQty(), id);
+        if (outbound.getInventoryId() != null) {
+            addLog(user.getUsername(), "UPDATE", "inventory", "删除出库导致库存回滚: " + outbound.getProductName() + " +" + outbound.getOutboundQty(), outbound.getInventoryId());
+        }
 
         outboundMapper.deleteById(id);
         return Result.success("出库记录删除成功");
