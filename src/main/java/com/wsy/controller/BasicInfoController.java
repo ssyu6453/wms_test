@@ -58,6 +58,30 @@ public class BasicInfoController {
         return Result.success("新增基础信息成功");
     }
 
+    // 编辑基础信息
+    @PutMapping("/update")
+    public Result<?> update(@RequestBody BasicInfo basicInfo) {
+        if (basicInfo.getId() == null) {
+            return Result.error("ID不能为空");
+        }
+        // 防止前端传过来的空字符串日期导致数据库报错
+        if ("".equals(basicInfo.getProdDate())) {
+            basicInfo.setProdDate(null);
+        }
+        if ("".equals(basicInfo.getValidDate())) {
+            basicInfo.setValidDate(null);
+        }
+
+        // 后端自动计算 金额 = 价格 * 期初库存
+        if (basicInfo.getPrice() != null && basicInfo.getInitStock() != null) {
+            basicInfo.setAmount(basicInfo.getPrice().multiply(new BigDecimal(basicInfo.getInitStock())));
+        } else {
+            basicInfo.setAmount(BigDecimal.ZERO);
+        }
+        basicInfoMapper.updateById(basicInfo);
+        return Result.success("更新基础信息成功");
+    }
+
     // 删除基础信息
     @DeleteMapping("/delete/{id}")
     public Result<?> delete(@PathVariable Integer id) {

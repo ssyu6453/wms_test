@@ -1,5 +1,5 @@
 -- ===============================
--- WMS 数据库（按你给的字段顺序重写）
+-- WMS 数据库
 -- 可直接导入旧数据；序号使用自增ID（从1开始，后续自动接续）
 -- ===============================
 
@@ -193,3 +193,59 @@ FROM t_inventory;
 -- ALTER TABLE `t_basic_info` MODIFY COLUMN `valid_date` VARCHAR(50) DEFAULT NULL COMMENT '有效期(支持年月格式)';
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `production_date` VARCHAR(50) DEFAULT NULL COMMENT '生产日期(支持年月格式如2024.03)';
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `valid_date` VARCHAR(50) DEFAULT NULL COMMENT '有效期(支持年月格式)';
+
+-- ========================================
+-- 8) 单据模板表
+-- ========================================
+DROP TABLE IF EXISTS `t_doc_template`;
+CREATE TABLE `t_doc_template` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '模板ID',
+  `template_type` VARCHAR(20) NOT NULL COMMENT '模板类型: inbound/outbound/completion/settlement/quote',
+  `template_name` VARCHAR(50) NOT NULL COMMENT '模板名称',
+  `prefix` VARCHAR(10) DEFAULT '' COMMENT '单据前缀',
+  `date_format` VARCHAR(20) DEFAULT 'YYYYMMDD' COMMENT '日期格式',
+  `seq_length` INT DEFAULT 4 COMMENT '流水号位数',
+  `title` VARCHAR(50) DEFAULT '' COMMENT '单据标题',
+  `company_name` VARCHAR(100) DEFAULT '' COMMENT '公司名称',
+  `layout_type` VARCHAR(20) DEFAULT 'standard' COMMENT '布局类型: standard/compact/detailed',
+  `field_config` JSON COMMENT '字段配置JSON',
+  `footer_config` JSON COMMENT '页脚配置JSON',
+  `is_default` TINYINT DEFAULT 0 COMMENT '是否默认模板: 0=否,1=是',
+  `create_by` VARCHAR(50) DEFAULT NULL COMMENT '创建人',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_template_type` (`template_type`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='单据模板表';
+
+-- 插入默认入库单模板
+INSERT INTO `t_doc_template` (`template_type`, `template_name`, `prefix`, `date_format`, `seq_length`, `title`, `company_name`, `layout_type`, `field_config`, `footer_config`, `is_default`, `create_by`)
+VALUES ('inbound', '默认入库单模板', 'RK', 'YYYYMMDD', 4, '入库单', '', 'standard',
+'[{"key":"id","label":"序号","checked":true,"order":1},{"key":"productName","label":"品名","checked":true,"order":2},{"key":"specification","label":"规格型号","checked":true,"order":3},{"key":"unit","label":"单位","checked":true,"order":4},{"key":"inboundQty","label":"数量","checked":true,"order":5},{"key":"price","label":"单价","checked":true,"order":6},{"key":"inboundAmount","label":"金额","checked":true,"order":7},{"key":"supplier","label":"供应商","checked":false,"order":8},{"key":"certNo","label":"证书编号","checked":false,"order":9},{"key":"productionDate","label":"生产日期","checked":false,"order":10},{"key":"validDate","label":"有效期","checked":false,"order":11},{"key":"remark","label":"备注","checked":false,"order":12}]',
+'{"handlerLabel":"经办人","approverLabel":"审核人","remarkLabel":"备注"}',
+1, 'system');
+
+-- 插入默认出库单模板
+INSERT INTO `t_doc_template` (`template_type`, `template_name`, `prefix`, `date_format`, `seq_length`, `title`, `company_name`, `layout_type`, `field_config`, `footer_config`, `is_default`, `create_by`)
+VALUES ('outbound', '默认出库单模板', 'CK', 'YYYYMMDD', 4, '出库单', '', 'standard',
+'[{"key":"id","label":"序号","checked":true,"order":1},{"key":"productName","label":"品名","checked":true,"order":2},{"key":"specification","label":"规格型号","checked":true,"order":3},{"key":"unit","label":"单位","checked":true,"order":4},{"key":"outboundQty","label":"数量","checked":true,"order":5},{"key":"price","label":"单价","checked":true,"order":6},{"key":"outboundAmount","label":"金额","checked":true,"order":7},{"key":"purpose","label":"用途","checked":true,"order":8},{"key":"supplier","label":"供应商","checked":false,"order":9},{"key":"remark","label":"备注","checked":false,"order":10}]',
+'{"handlerLabel":"经办人","receiverLabel":"领用人","remarkLabel":"备注"}',
+1, 'system');
+
+-- ========================================
+-- 9) 操作日志表
+-- ========================================
+DROP TABLE IF EXISTS `t_operation_log`;
+CREATE TABLE `t_operation_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `operator` VARCHAR(50) NOT NULL COMMENT '操作人',
+  `op_type` VARCHAR(20) NOT NULL COMMENT '操作类型: ADD/UPDATE/DELETE/EXPORT',
+  `module` VARCHAR(20) NOT NULL COMMENT '模块: inbound/outbound/inventory/template/basic_info',
+  `description` VARCHAR(500) DEFAULT NULL COMMENT '操作描述',
+  `target_id` INT DEFAULT NULL COMMENT '目标记录ID',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_log_time` (`create_time`),
+  KEY `idx_log_module` (`module`),
+  KEY `idx_log_operator` (`operator`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表';

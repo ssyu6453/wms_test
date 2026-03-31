@@ -8,6 +8,8 @@
     <script src="https://unpkg.com/element-plus"></script>
     <script src="https://unpkg.com/@element-plus/icons-vue"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: "Microsoft YaHei", sans-serif; background-color: #f0f2f5; }
         #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden;}
@@ -26,7 +28,29 @@
         .red-text { color: #F56C6C; }
         .orange-text { color: #E6A23C; }
         .box-card { margin-bottom: 20px; }
-        .toolbar { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; }
+        .toolbar { margin-bottom: 15px; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+        .toolbar-left { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .toolbar-right { display: flex; align-items: center; gap: 10px; }
+        /* PDF打印样式 */
+        .pdf-container { position: fixed; left: -9999px; top: 0; width: 800px; background: white; padding: 30px; font-family: "Microsoft YaHei", "SimSun", sans-serif; }
+        .pdf-title { text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
+        .pdf-header { display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 14px; }
+        .pdf-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .pdf-table th, .pdf-table td { border: 1px solid #333; padding: 8px; text-align: center; font-size: 12px; }
+        .pdf-table th { background-color: #f0f0f0; font-weight: bold; }
+        .pdf-footer { margin-top: 20px; font-size: 14px; }
+        .pdf-footer-row { display: flex; justify-content: space-between; margin-top: 10px; }
+        /* A4预览样式 */
+        .a4-preview-container { background: #f5f5f5; padding: 20px; display: flex; justify-content: center; }
+        .a4-preview { width: 210mm; min-height: 297mm; background: white; box-shadow: 0 2px 12px rgba(0,0,0,0.15); padding: 20mm; box-sizing: border-box; transform-origin: top center; }
+        .a4-preview-scaled { transform: scale(0.5); margin-bottom: -148.5mm; }
+        .layout-card { cursor: pointer; border: 2px solid transparent; transition: all 0.3s; }
+        .layout-card:hover { border-color: #409EFF; }
+        .layout-card.active { border-color: #409EFF; background: #ecf5ff; }
+        .field-item { display: inline-flex; align-items: center; padding: 5px 10px; margin: 5px; background: #f0f2f5; border-radius: 4px; }
+        .field-item .el-checkbox { margin-right: 5px; }
+        .field-order-btns { margin-left: 10px; }
+        .field-order-btns .el-button { padding: 2px 5px; }
     </style>
 </head>
 <body>
@@ -60,11 +84,13 @@
                 <el-menu-item index="Inventory"><el-icon><ep-box /></el-icon><template #title>库存明细表</template></el-menu-item>
                 <el-menu-item index="Overview"><el-icon><ep-pie-chart /></el-icon><template #title>出入库总览表</template></el-menu-item>
                 <el-menu-item index="UserManager" v-if="currentUser.roleType === 2"><el-icon><ep-user-filled /></el-icon><template #title>用户权限审核</template></el-menu-item>
+                <el-menu-item index="TemplateManager" v-if="currentUser.roleType >= 1"><el-icon><ep-document-copy /></el-icon><template #title>单据模板管理</template></el-menu-item>
+                <el-menu-item index="OperationLog" v-if="currentUser.roleType >= 1"><el-icon><ep-document /></el-icon><template #title>操作日志</template></el-menu-item>
             </el-menu>
         </aside>
 
         <main class="content-box">
-            
+
             <!-- 1. 首页与预警面板 -->
             <div v-show="activeMenu === 'Dashboard'">
                 <el-row :gutter="20">
@@ -88,17 +114,17 @@
                     </el-col>
                 </el-row>
                 <el-card class="box-card" style="margin-top:20px;">
-                    <template #header>需要预警的详细清单 (当前为演示假数据)</template>
+                    <template #header>需要预警的详细清单</template>
                     <el-table :data="alertData" style="width: 100%" border stripe>
-                        <el-table-column prop="product_name" label="品名" width="180"></el-table-column>
+                        <el-table-column prop="productName" label="品名" width="180"></el-table-column>
                         <el-table-column prop="specification" label="规格型号"></el-table-column>
-                        <el-table-column prop="current_stock_qty" label="现有库存">
+                        <el-table-column prop="currentStockQty" label="现有库存">
                             <template #default="{ row }">
-                                <el-tag :type="row.current_stock_qty <= 0 ? 'danger' : 'warning'">{{ row.current_stock_qty }}</el-tag>
+                                <el-tag :type="row.currentStockQty <= 0 ? 'danger' : 'warning'">{{ row.currentStockQty }}</el-tag>
                             </template>
                         </el-table-column>
                         <el-table-column prop="supplier" label="供应商"></el-table-column>
-                        <el-table-column prop="safe_stock_qty" label="安全库存"></el-table-column>
+                        <el-table-column prop="safeStockQty" label="安全库存"></el-table-column>
                     </el-table>
                 </el-card>
             </div>
@@ -107,14 +133,20 @@
             <div v-show="activeMenu === 'BasicInfo'">
                 <el-card class="box-card">
                     <div class="toolbar">
-                        <el-form :inline="true" size="small">
-                            <el-form-item label="品名"><el-input v-model="searchBasicInfo" placeholder="搜索品名" clearable></el-input></el-form-item>
-                            <el-form-item><el-button type="primary" @click="currentPageBasicInfo = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
-                        </el-form>
-                        <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="fetchBasicInfo">刷新数据</el-button>
+                        <div class="toolbar-left">
+                            <el-form :inline="true" size="small">
+                                <el-form-item label="品名"><el-input v-model="searchBasicInfo" placeholder="搜索品名" clearable></el-input></el-form-item>
+                                <el-form-item><el-button type="primary" @click="currentPageBasicInfo = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                            </el-form>
+                        </div>
+                        <div class="toolbar-right">
+                            <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openBasicInfoDialog()"><el-icon><ep-plus /></el-icon> 新增</el-button>
+                            <el-button type="primary" size="small" @click="exportBasicInfoExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
+                            <el-button type="warning" size="small" @click="fetchBasicInfo">刷新</el-button>
+                        </div>
                     </div>
                     <el-table :data="pagedBasicInfo" border stripe style="width: 100%" height="calc(100vh - 310px)" v-loading="loadingBasicInfo">
-                        <el-table-column type="index" label="序号" width="60" align="center"></el-table-column>
+                        <el-table-column prop="id" label="ID" width="70" align="center"></el-table-column>
                         <el-table-column prop="productName" label="品名" width="150" fixed="left"></el-table-column>
                         <el-table-column prop="category" label="分类" width="100"></el-table-column>
                         <el-table-column prop="price" label="价格(元)" width="100"></el-table-column>
@@ -129,6 +161,12 @@
                         <el-table-column prop="prodDate" label="生产日期" width="120"></el-table-column>
                         <el-table-column prop="validDate" label="有效期" width="120"></el-table-column>
                         <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column fixed="right" label="操作" width="140" v-if="currentUser.roleType > 0">
+                            <template #default="{ row }">
+                                <el-button type="primary" link size="small" @click="openBasicInfoDialog(row)">编辑</el-button>
+                                <el-button type="danger" link size="small" @click="deleteBasicInfo(row)">删除</el-button>
+                            </template>
+                        </el-table-column>
                     </el-table>
                     <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
                         <el-pagination v-model:current-page="currentPageBasicInfo" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredBasicInfo.length" layout="total, sizes, prev, pager, next, jumper" background />
@@ -141,34 +179,38 @@
             <div v-show="activeMenu === 'Inbound'">
                 <el-card class="box-card">
                     <div class="toolbar">
-                        <el-form :inline="true" size="small">
-                            <el-form-item label="品名"><el-input v-model="searchInbound" placeholder="搜索品名" clearable></el-input></el-form-item>
-                            <el-form-item label="入库日期"><el-date-picker v-model="searchInboundDate" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" clearable></el-date-picker></el-form-item>
-                            <el-form-item><el-button type="primary" @click="currentPageInbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
-                        </el-form>
-                        <el-button type="success" size="small" v-if="currentUser.roleType > 0">新增入库</el-button>
+                        <div class="toolbar-left">
+                            <el-form :inline="true" size="small">
+                                <el-form-item label="品名"><el-input v-model="searchInbound" placeholder="搜索品名" clearable></el-input></el-form-item>
+                                <el-form-item label="入库日期"><el-date-picker v-model="searchInboundDate" type="daterange" range-separator="至" start-placeholder="开始" end-placeholder="结束" clearable></el-date-picker></el-form-item>
+                                <el-form-item><el-button type="primary" @click="currentPageInbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                            </el-form>
+                        </div>
+                        <div class="toolbar-right">
+                            <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openInboundDialog()"><el-icon><ep-plus /></el-icon> 新增入库</el-button>
+                            <el-button type="primary" size="small" @click="exportInboundExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
+                            <el-button type="info" size="small" @click="openInboundTemplateDialog"><el-icon><ep-printer /></el-icon> 生成入库单</el-button>
+                        </div>
                     </div>
                     <el-table :data="pagedInbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
-                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
-                        <el-table-column prop="inboundDate" label="入库日期" width="120"></el-table-column>
+                        <el-table-column prop="id" label="ID" width="70" align="center"></el-table-column>
+                        <el-table-column prop="inboundDate" label="入库日期" width="120">
+                            <template #default="{ row }">{{ row.inboundDate ? row.inboundDate.substring(0, 10) : '' }}</template>
+                        </el-table-column>
                         <el-table-column prop="productName" label="品名" width="150" show-overflow-tooltip></el-table-column>
                         <el-table-column prop="price" label="价格(元)" width="100"></el-table-column>
-                        <el-table-column prop="spec" label="规格型号" width="120"></el-table-column>
+                        <el-table-column prop="specification" label="规格型号" width="120"></el-table-column>
                         <el-table-column prop="supplier" label="供应商" width="180" show-overflow-tooltip></el-table-column>
                         <el-table-column prop="unit" label="单位" width="60" align="center"></el-table-column>
-                        <el-table-column prop="initQty" label="期初库存" width="90" align="center"></el-table-column>
-                        <el-table-column prop="certNo" label="产品证书编号" width="150" show-overflow-tooltip></el-table-column>
-                        <el-table-column prop="qty" label="入库数量" width="90" align="center">
-                            <template #default="{ row }"><span style="color:#67C23A; font-weight:bold;">+{{ row.qty }}</span></template>
+                        <el-table-column prop="inboundQty" label="入库数量" width="90" align="center">
+                            <template #default="{ row }"><span style="color:#67C23A; font-weight:bold;">+{{ row.inboundQty }}</span></template>
                         </el-table-column>
-                        <el-table-column prop="amount" label="入库金额(元)" width="120" sortable></el-table-column>
-                        <el-table-column prop="prodDate" label="生产日期" width="120"></el-table-column>
-                        <el-table-column prop="validDate" label="有效期" width="120"></el-table-column>
+                        <el-table-column prop="inboundAmount" label="入库金额(元)" width="120" sortable></el-table-column>
                         <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
-                        <el-table-column fixed="right" label="操作" width="120" v-if="currentUser.roleType > 0">
+                        <el-table-column fixed="right" label="操作" width="140" v-if="currentUser.roleType > 0">
                             <template #default="{ row }">
-                                <el-button type="primary" link size="small">编辑</el-button>
-                                <el-button type="danger" link size="small">删除</el-button>
+                                <el-button type="primary" link size="small" @click="openInboundDialog(row)">编辑</el-button>
+                                <el-button type="danger" link size="small" @click="deleteInbound(row)">删除</el-button>
                             </template>
                         </el-table-column>
                     </el-table>
@@ -179,17 +221,24 @@
                 </el-card>
             </div>
 
+            <!-- 3. 出库明细表 -->
             <div v-show="activeMenu === 'Outbound'">
                 <el-card class="box-card">
                     <div class="toolbar">
-                        <el-form :inline="true" size="small">
-                            <el-form-item label="品名"><el-input v-model="searchOutbound" placeholder="匹配品名" clearable></el-input></el-form-item>
-                            <el-form-item><el-button type="primary" @click="currentPageOutbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
-                        </el-form>
-                        <el-button type="success" size="small" v-if="currentUser.roleType > 0">新建出库</el-button>
+                        <div class="toolbar-left">
+                            <el-form :inline="true" size="small">
+                                <el-form-item label="品名"><el-input v-model="searchOutbound" placeholder="匹配品名" clearable></el-input></el-form-item>
+                                <el-form-item><el-button type="primary" @click="currentPageOutbound = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                            </el-form>
+                        </div>
+                        <div class="toolbar-right">
+                            <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openOutboundDialog()"><el-icon><ep-plus /></el-icon> 新建出库</el-button>
+                            <el-button type="primary" size="small" @click="exportOutboundExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
+                            <el-button type="info" size="small" @click="openOutboundTemplateDialog"><el-icon><ep-printer /></el-icon> 生成出库单</el-button>
+                        </div>
                     </div>
                     <el-table :data="pagedOutbound" border stripe style="width: 100%" height="calc(100vh - 310px)">
-                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="id" label="ID" width="70" align="center"></el-table-column>
                         <el-table-column prop="outboundDate" label="出库日期" width="120">
                             <template #default="{ row }">{{ row.outboundDate ? row.outboundDate.substring(0, 10) : '' }}</template>
                         </el-table-column>
@@ -202,11 +251,17 @@
                         </el-table-column>
                         <el-table-column prop="outboundAmount" label="出库金额(元)" width="120" sortable></el-table-column>
                         <el-table-column prop="purpose" label="用途" width="150" show-overflow-tooltip></el-table-column>
-                        <el-table-column prop="operator" label="操作人" width="100"></el-table-column>
                         <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column fixed="right" label="操作" width="140" v-if="currentUser.roleType > 0">
+                            <template #default="{ row }">
+                                <el-button type="primary" link size="small" @click="openOutboundDialog(row)">编辑</el-button>
+                                <el-button type="danger" link size="small" @click="deleteOutbound(row)">删除</el-button>
+                            </template>
+                        </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px;">
+                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
                         <el-pagination v-model:current-page="currentPageOutbound" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredOutbound.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        <span style="font-weight: bold; font-size: 16px;">出库总金额： <span style="color:#F56C6C;"> {{ totalOutboundAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -215,13 +270,19 @@
             <div v-show="activeMenu === 'Inventory'">
                 <el-card class="box-card">
                     <div class="toolbar">
-                        <el-form :inline="true" size="small">
-                            <el-form-item label="品名"><el-input v-model="searchInventory" placeholder="匹配品名" clearable></el-input></el-form-item>
-                            <el-form-item><el-button type="primary" @click="currentPageInventory = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
-                        </el-form>
+                        <div class="toolbar-left">
+                            <el-form :inline="true" size="small">
+                                <el-form-item label="品名"><el-input v-model="searchInventory" placeholder="匹配品名" clearable></el-input></el-form-item>
+                                <el-form-item><el-button type="primary" @click="currentPageInventory = 1"><el-icon><ep-search /></el-icon> 查询</el-button></el-form-item>
+                            </el-form>
+                        </div>
+                        <div class="toolbar-right">
+                            <el-button type="success" size="small" v-if="currentUser.roleType > 0" @click="openInventoryDialog()"><el-icon><ep-plus /></el-icon> 新增库存</el-button>
+                            <el-button type="primary" size="small" @click="exportInventoryExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
+                        </div>
                     </div>
                     <el-table :data="pagedInventory" border stripe style="width: 100%" height="calc(100vh - 310px)">
-                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
+                        <el-table-column prop="id" label="ID" width="70" align="center"></el-table-column>
                         <el-table-column prop="productName" label="品名" width="150" show-overflow-tooltip></el-table-column>
                         <el-table-column prop="price" label="单价"></el-table-column>
                         <el-table-column prop="specification" label="规格型号"></el-table-column>
@@ -235,9 +296,15 @@
                         </el-table-column>
                         <el-table-column prop="safeStockQty" label="安全库存" width="90" align="center"></el-table-column>
                         <el-table-column prop="remark" label="备注" width="150" show-overflow-tooltip></el-table-column>
+                        <el-table-column fixed="right" label="操作" width="100" v-if="currentUser.roleType > 0">
+                            <template #default="{ row }">
+                                <el-button type="primary" link size="small" @click="openInventoryDialog(row)">编辑</el-button>
+                            </template>
+                        </el-table-column>
                     </el-table>
-                    <div style="margin-top: 15px;">
+                    <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
                         <el-pagination v-model:current-page="currentPageInventory" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredInventory.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        <span style="font-weight: bold; font-size: 16px;">库存总金额： <span style="color:#F56C6C;"> {{ totalInventoryAmount }}</span></span>
                     </div>
                 </el-card>
             </div>
@@ -245,6 +312,12 @@
             <!-- 出入库总览表 -->
             <div v-show="activeMenu === 'Overview'">
                 <el-card class="box-card">
+                    <div class="toolbar">
+                        <div class="toolbar-left"></div>
+                        <div class="toolbar-right">
+                            <el-button type="primary" size="small" @click="exportOverviewExcel"><el-icon><ep-document /></el-icon> 导出Excel</el-button>
+                        </div>
+                    </div>
                     <el-table :data="pagedOverview" border stripe style="width: 100%" height="calc(100vh - 260px)">
                         <el-table-column prop="productName" label="品名" width="150" fixed="left"></el-table-column>
                         <el-table-column prop="initStockQty" label="期初量"></el-table-column>
@@ -263,38 +336,439 @@
             <!-- 用户权限审核 -->
             <div v-show="activeMenu === 'UserManager'">
                 <el-card class="box-card">
+                    <template #header>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>用户管理</span>
+                            <el-radio-group v-model="userFilterType" size="small">
+                                <el-radio-button label="all">全部用户</el-radio-button>
+                                <el-radio-button label="pending">待审核</el-radio-button>
+                                <el-radio-button label="approved">已通过</el-radio-button>
+                            </el-radio-group>
+                        </div>
+                    </template>
                     <el-table :data="pagedUserData" border stripe style="width: 100%">
-                        <el-table-column type="index" label="序号" width="55" align="center"></el-table-column>
-                        <el-table-column prop="username" label="用户名"></el-table-column>
-                        <el-table-column prop="roleType" label="角色">
+                        <el-table-column prop="id" label="ID" width="70" align="center"></el-table-column>
+                        <el-table-column prop="username" label="用户名" width="150"></el-table-column>
+                        <el-table-column prop="roleType" label="角色" width="150">
                             <template #default="{ row }">
-                                <el-tag>{{ roleMap[row.roleType] || '普通用户' }}</el-tag>
+                                <el-tag :type="row.roleType === 2 ? 'danger' : row.roleType === 1 ? 'warning' : 'info'">{{ roleMap[row.roleType] || '普通用户' }}</el-tag>
                             </template>
                         </el-table-column>
-                        <el-table-column prop="status" label="状态">
+                        <el-table-column prop="status" label="状态" width="120">
                             <template #default="{ row }">
-                                <el-tag :type="row.status === 1 ? 'success' : 'warning'">{{ row.status === 1 ? '正常' : '待审核' }}</el-tag>
+                                <el-tag :type="row.status === 1 ? 'success' : row.status === 2 ? 'danger' : 'warning'">{{ row.status === 1 ? '已通过' : row.status === 2 ? '已拒绝' : '待审核' }}</el-tag>
                             </template>
                         </el-table-column>
-                        <el-table-column fixed="right" label="操作" width="120">
+                        <el-table-column prop="createTime" label="注册时间" width="180">
+                            <template #default="{ row }">{{ row.createTime ? row.createTime.substring(0, 19).replace('T', ' ') : '' }}</template>
+                        </el-table-column>
+                        <el-table-column fixed="right" label="操作" width="280">
                            <template #default="{ row }">
-                               <el-button type="success" link size="small" v-if="row.status===0">通过</el-button>
+                               <template v-if="row.status === 0">
+                                   <el-button type="success" link size="small" @click="openAuditDialog(row, 1)">通过</el-button>
+                                   <el-button type="danger" link size="small" @click="auditUser(row.id, 2)">拒绝</el-button>
+                               </template>
+                               <template v-if="row.status === 1 && row.username !== 'admin'">
+                                   <el-button type="primary" link size="small" @click="openRoleDialog(row)">修改角色</el-button>
+                               </template>
+                               <template v-if="row.username === 'admin'">
+                                   <span style="color: #909399; font-size: 12px;">系统管理员</span>
+                               </template>
                            </template>
                         </el-table-column>
                     </el-table>
                     <div style="margin-top: 15px;">
-                        <el-pagination v-model:current-page="currentPageUser" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="userData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                        <el-pagination v-model:current-page="currentPageUser" v-model:page-size="pageSize" :page-sizes="pageSizes" :total="filteredUserData.length" layout="total, sizes, prev, pager, next, jumper" background />
+                    </div>
+                </el-card>
+            </div>
+
+            <!-- 单据模板管理 -->
+            <div v-show="activeMenu === 'TemplateManager'">
+                <el-card class="box-card">
+                    <template #header>
+                        <span>单据模板管理</span>
+                    </template>
+                    <el-tabs v-model="templateTab">
+                        <el-tab-pane label="入库单模板" name="inbound">
+                            <el-form :model="inboundTemplate" label-width="120px">
+                                <el-divider content-position="left">编号规则</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="8">
+                                        <el-form-item label="单据前缀">
+                                            <el-input v-model="inboundTemplate.prefix" placeholder="如：RK"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-form-item label="日期格式">
+                                            <el-select v-model="inboundTemplate.dateFormat" style="width:100%">
+                                                <el-option label="YYYYMMDD (如20260331)" value="YYYYMMDD"></el-option>
+                                                <el-option label="YYMMDD (如260331)" value="YYMMDD"></el-option>
+                                                <el-option label="无日期" value=""></el-option>
+                                            </el-select>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-form-item label="流水号位数">
+                                            <el-input-number v-model="inboundTemplate.seqLength" :min="1" :max="6" style="width:100%"></el-input-number>
+                                        </el-form-item>
+                                    </el-col>
+                                </el-row>
+                                <el-form-item label="编号预览">
+                                    <el-tag type="success" size="large">{{ previewInboundDocNo }}</el-tag>
+                                </el-form-item>
+
+                                <el-divider content-position="left">抬头信息</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="12">
+                                        <el-form-item label="单据标题">
+                                            <el-input v-model="inboundTemplate.title" placeholder="如：入库单"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="12">
+                                        <el-form-item label="公司名称">
+                                            <el-input v-model="inboundTemplate.companyName" placeholder="公司/仓库名称"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                </el-row>
+
+                                <el-divider content-position="left">显示字段（拖拽排序）</el-divider>
+                                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
+                                    <el-checkbox v-for="field in inboundFieldOptions" :key="field.key" v-model="field.checked">{{ field.label }}</el-checkbox>
+                                </div>
+
+                                <el-divider content-position="left">页脚信息</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="8"><el-form-item label="经办人标签"><el-input v-model="inboundTemplate.handlerLabel" placeholder="如：经办人"></el-input></el-form-item></el-col>
+                                    <el-col :span="8"><el-form-item label="审核人标签"><el-input v-model="inboundTemplate.approverLabel" placeholder="如：审核人"></el-input></el-form-item></el-col>
+                                    <el-col :span="8"><el-form-item label="备注标签"><el-input v-model="inboundTemplate.remarkLabel" placeholder="如：备注"></el-input></el-form-item></el-col>
+                                </el-row>
+
+                                <el-form-item>
+                                    <el-button type="primary" @click="saveInboundTemplate">保存入库单模板</el-button>
+                                    <el-button @click="resetInboundTemplate">恢复默认</el-button>
+                                </el-form-item>
+                            </el-form>
+                        </el-tab-pane>
+
+                        <el-tab-pane label="出库单模板" name="outbound">
+                            <el-form :model="outboundTemplate" label-width="120px">
+                                <el-divider content-position="left">编号规则</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="8">
+                                        <el-form-item label="单据前缀">
+                                            <el-input v-model="outboundTemplate.prefix" placeholder="如：CK"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-form-item label="日期格式">
+                                            <el-select v-model="outboundTemplate.dateFormat" style="width:100%">
+                                                <el-option label="YYYYMMDD (如20260331)" value="YYYYMMDD"></el-option>
+                                                <el-option label="YYMMDD (如260331)" value="YYMMDD"></el-option>
+                                                <el-option label="无日期" value=""></el-option>
+                                            </el-select>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-form-item label="流水号位数">
+                                            <el-input-number v-model="outboundTemplate.seqLength" :min="1" :max="6" style="width:100%"></el-input-number>
+                                        </el-form-item>
+                                    </el-col>
+                                </el-row>
+                                <el-form-item label="编号预览">
+                                    <el-tag type="warning" size="large">{{ previewOutboundDocNo }}</el-tag>
+                                </el-form-item>
+
+                                <el-divider content-position="left">抬头信息</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="12">
+                                        <el-form-item label="单据标题">
+                                            <el-input v-model="outboundTemplate.title" placeholder="如：出库单"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                    <el-col :span="12">
+                                        <el-form-item label="公司名称">
+                                            <el-input v-model="outboundTemplate.companyName" placeholder="公司/仓库名称"></el-input>
+                                        </el-form-item>
+                                    </el-col>
+                                </el-row>
+
+                                <el-divider content-position="left">显示字段</el-divider>
+                                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
+                                    <el-checkbox v-for="field in outboundFieldOptions" :key="field.key" v-model="field.checked">{{ field.label }}</el-checkbox>
+                                </div>
+
+                                <el-divider content-position="left">页脚信息</el-divider>
+                                <el-row :gutter="20">
+                                    <el-col :span="8"><el-form-item label="经办人标签"><el-input v-model="outboundTemplate.handlerLabel" placeholder="如：经办人"></el-input></el-form-item></el-col>
+                                    <el-col :span="8"><el-form-item label="领用人标签"><el-input v-model="outboundTemplate.receiverLabel" placeholder="如：领用人"></el-input></el-form-item></el-col>
+                                    <el-col :span="8"><el-form-item label="备注标签"><el-input v-model="outboundTemplate.remarkLabel" placeholder="如：备注"></el-input></el-form-item></el-col>
+                                </el-row>
+
+                                <el-form-item>
+                                    <el-button type="primary" @click="saveOutboundTemplate">保存出库单模板</el-button>
+                                    <el-button @click="resetOutboundTemplate">恢复默认</el-button>
+                                </el-form-item>
+                            </el-form>
+                        </el-tab-pane>
+                    </el-tabs>
+                </el-card>
+            </div>
+
+            <!-- 操作日志 -->
+            <div v-show="activeMenu === 'OperationLog'">
+                <el-card class="box-card">
+                    <template #header>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span>操作日志</span>
+                            <el-button type="primary" size="small" @click="fetchOperationLogs">刷新</el-button>
+                        </div>
+                    </template>
+                    <div class="toolbar">
+                        <div class="toolbar-left">
+                            <el-form :inline="true" size="small">
+                                <el-form-item label="模块">
+                                    <el-select v-model="logFilter.module" placeholder="全部模块" clearable style="width:120px">
+                                        <el-option label="入库" value="inbound"></el-option>
+                                        <el-option label="出库" value="outbound"></el-option>
+                                        <el-option label="库存" value="inventory"></el-option>
+                                        <el-option label="模板" value="template"></el-option>
+                                        <el-option label="基础信息" value="basic_info"></el-option>
+                                    </el-select>
+                                </el-form-item>
+                                <el-form-item label="操作类型">
+                                    <el-select v-model="logFilter.opType" placeholder="全部类型" clearable style="width:120px">
+                                        <el-option label="新增" value="ADD"></el-option>
+                                        <el-option label="更新" value="UPDATE"></el-option>
+                                        <el-option label="删除" value="DELETE"></el-option>
+                                        <el-option label="导出" value="EXPORT"></el-option>
+                                    </el-select>
+                                </el-form-item>
+                                <el-form-item label="操作人">
+                                    <el-input v-model="logFilter.operator" placeholder="操作人" clearable style="width:120px"></el-input>
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" @click="fetchOperationLogs">查询</el-button>
+                                </el-form-item>
+                            </el-form>
+                        </div>
+                    </div>
+                    <el-table :data="operationLogs" border stripe style="width: 100%" height="calc(100vh - 310px)" v-loading="loadingLogs">
+                        <el-table-column prop="id" label="ID" width="80" align="center"></el-table-column>
+                        <el-table-column prop="createTime" label="操作时间" width="180">
+                            <template #default="{ row }">{{ formatDateTime(row.createTime) }}</template>
+                        </el-table-column>
+                        <el-table-column prop="operator" label="操作人" width="120"></el-table-column>
+                        <el-table-column prop="module" label="模块" width="100">
+                            <template #default="{ row }">
+                                <el-tag :type="getModuleTagType(row.module)" size="small">{{ getModuleLabel(row.module) }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="opType" label="操作类型" width="100">
+                            <template #default="{ row }">
+                                <el-tag :type="getOpTypeTagType(row.opType)" size="small">{{ getOpTypeLabel(row.opType) }}</el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="description" label="操作描述" min-width="250" show-overflow-tooltip></el-table-column>
+                        <el-table-column prop="targetId" label="目标ID" width="100" align="center"></el-table-column>
+                    </el-table>
+                    <div style="margin-top: 15px;">
+                        <el-pagination v-model:current-page="logPagination.page" v-model:page-size="logPagination.size" :page-sizes="[20, 50, 100]" :total="logPagination.total" layout="total, sizes, prev, pager, next, jumper" background @current-change="fetchOperationLogs" @size-change="fetchOperationLogs" />
                     </div>
                 </el-card>
             </div>
         </main>
     </div>
+
+    <!-- PDF预览容器 -->
+    <div id="pdfContainer" class="pdf-container"></div>
+
+    <!-- 基础信息对话框 -->
+    <el-dialog v-model="basicInfoDialogVisible" :title="basicInfoForm.id ? '编辑基础信息' : '新增基础信息'" width="600px">
+        <el-form :model="basicInfoForm" label-width="100px">
+            <el-row :gutter="20">
+                <el-col :span="12"><el-form-item label="品名" required><el-input v-model="basicInfoForm.productName" placeholder="请输入品名"></el-input></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="分类"><el-input v-model="basicInfoForm.category" placeholder="请输入分类"></el-input></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="20">
+                <el-col :span="12"><el-form-item label="价格" required><el-input-number v-model="basicInfoForm.price" :precision="2" :min="0" style="width:100%"></el-input-number></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="单位"><el-input v-model="basicInfoForm.unit" placeholder="如：个、箱、kg"></el-input></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="20">
+                <el-col :span="12"><el-form-item label="规格型号"><el-input v-model="basicInfoForm.specification" placeholder="请输入规格型号"></el-input></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="供应商"><el-input v-model="basicInfoForm.supplier" placeholder="请输入供应商"></el-input></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="20">
+                <el-col :span="12"><el-form-item label="期初库存"><el-input-number v-model="basicInfoForm.initStock" :min="0" style="width:100%"></el-input-number></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="证书编号"><el-input v-model="basicInfoForm.certNo" placeholder="产品证书编号"></el-input></el-form-item></el-col>
+            </el-row>
+            <el-row :gutter="20">
+                <el-col :span="12"><el-form-item label="生产日期"><el-date-picker v-model="basicInfoForm.prodDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="有效期"><el-date-picker v-model="basicInfoForm.validDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker></el-form-item></el-col>
+            </el-row>
+            <el-form-item label="备注"><el-input v-model="basicInfoForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="basicInfoDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitBasicInfo">确定</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 入库对话框 -->
+    <el-dialog v-model="inboundDialogVisible" :title="inboundForm.id ? '编辑入库' : '新增入库'" width="500px">
+        <el-form :model="inboundForm" label-width="100px">
+            <el-form-item label="选择物品" required>
+                <el-select v-model="inboundForm.inventoryId" placeholder="请选择库存物品" style="width:100%" filterable @change="onInboundInventoryChange">
+                    <el-option v-for="item in inventoryOptions" :key="item.id" :label="item.productName + ' - ' + item.specification" :value="item.id"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="入库日期" required>
+                <el-date-picker v-model="inboundForm.inboundDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker>
+            </el-form-item>
+            <el-form-item label="入库数量" required>
+                <el-input-number v-model="inboundForm.inboundQty" :min="1" style="width:100%"></el-input-number>
+            </el-form-item>
+            <el-form-item label="备注">
+                <el-input v-model="inboundForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input>
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="inboundDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitInbound">确定</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 出库对话框 -->
+    <el-dialog v-model="outboundDialogVisible" :title="outboundForm.id ? '编辑出库' : '新建出库'" width="500px">
+        <el-form :model="outboundForm" label-width="100px">
+            <el-form-item label="选择物品" required>
+                <el-select v-model="outboundForm.inventoryId" placeholder="请选择库存物品" style="width:100%" filterable @change="onOutboundInventoryChange">
+                    <el-option v-for="item in inventoryOptions" :key="item.id" :label="item.productName + ' - ' + item.specification + ' (库存:' + item.currentStockQty + ')'" :value="item.id"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="出库日期" required>
+                <el-date-picker v-model="outboundForm.outboundDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%"></el-date-picker>
+            </el-form-item>
+            <el-form-item label="出库数量" required>
+                <el-input-number v-model="outboundForm.outboundQty" :min="1" :max="selectedInventoryStock" style="width:100%"></el-input-number>
+            </el-form-item>
+            <el-form-item label="用途">
+                <el-input v-model="outboundForm.purpose" placeholder="请输入用途"></el-input>
+            </el-form-item>
+            <el-form-item label="备注">
+                <el-input v-model="outboundForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input>
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="outboundDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitOutbound">确定</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 库存对话框 -->
+    <el-dialog v-model="inventoryDialogVisible" :title="inventoryForm.id ? '编辑库存' : '新增库存'" width="500px">
+        <el-form :model="inventoryForm" label-width="100px">
+            <el-form-item label="品名" required><el-input v-model="inventoryForm.productName" placeholder="请输入品名"></el-input></el-form-item>
+            <el-form-item label="单价" required><el-input-number v-model="inventoryForm.price" :precision="2" :min="0" style="width:100%"></el-input-number></el-form-item>
+            <el-form-item label="规格型号"><el-input v-model="inventoryForm.specification" placeholder="请输入规格型号"></el-input></el-form-item>
+            <el-form-item label="供应商"><el-input v-model="inventoryForm.supplier" placeholder="请输入供应商"></el-input></el-form-item>
+            <el-form-item label="单位"><el-input v-model="inventoryForm.unit" placeholder="如：个、箱、kg"></el-input></el-form-item>
+            <el-form-item label="期初库存"><el-input-number v-model="inventoryForm.initStockQty" :min="0" style="width:100%"></el-input-number></el-form-item>
+            <el-form-item label="安全库存"><el-input-number v-model="inventoryForm.safeStockQty" :min="0" style="width:100%"></el-input-number></el-form-item>
+            <el-form-item label="备注"><el-input v-model="inventoryForm.remark" type="textarea" :rows="2" placeholder="备注信息"></el-input></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="inventoryDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitInventory">确定</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 用户审核对话框 -->
+    <el-dialog v-model="auditDialogVisible" title="审核用户 - 选择角色" width="400px">
+        <el-form :model="auditForm" label-width="80px">
+            <el-form-item label="用户名">
+                <el-input v-model="auditForm.username" disabled></el-input>
+            </el-form-item>
+            <el-form-item label="分配角色" required>
+                <el-select v-model="auditForm.roleType" placeholder="请选择角色" style="width:100%">
+                    <el-option :value="0" label="普通用户(仅查看)"></el-option>
+                    <el-option :value="1" label="库存管理员"></el-option>
+                    <el-option :value="2" label="超级管理员"></el-option>
+                </el-select>
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="auditDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitAudit">确认通过</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 修改角色对话框 -->
+    <el-dialog v-model="roleDialogVisible" title="修改用户角色" width="400px">
+        <el-form :model="roleForm" label-width="80px">
+            <el-form-item label="用户名">
+                <el-input v-model="roleForm.username" disabled></el-input>
+            </el-form-item>
+            <el-form-item label="新角色" required>
+                <el-select v-model="roleForm.roleType" placeholder="请选择角色" style="width:100%">
+                    <el-option :value="0" label="普通用户(仅查看)"></el-option>
+                    <el-option :value="1" label="库存管理员"></el-option>
+                    <el-option :value="2" label="超级管理员"></el-option>
+                </el-select>
+            </el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="roleDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="submitRoleChange">确认修改</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 入库单模板对话框 -->
+    <el-dialog v-model="inboundTemplateDialogVisible" title="生成入库单" width="600px">
+        <el-form :model="inboundTemplateForm" label-width="100px">
+            <el-form-item label="单据编号"><el-input v-model="inboundTemplateForm.docNo" placeholder="自动生成或手动输入"></el-input></el-form-item>
+            <el-form-item label="入库日期"><el-date-picker v-model="inboundTemplateForm.date" type="date" value-format="YYYY-MM-DD" style="width:100%"></el-date-picker></el-form-item>
+            <el-form-item label="供应商"><el-input v-model="inboundTemplateForm.supplier" placeholder="请输入供应商"></el-input></el-form-item>
+            <el-form-item label="选择入库记录">
+                <el-select v-model="inboundTemplateForm.selectedIds" multiple placeholder="选择要包含的入库记录" style="width:100%" filterable>
+                    <el-option v-for="item in inboundData" :key="item.id" :label="item.productName + ' - ' + item.inboundQty + item.unit + ' (' + (item.inboundDate||'').substring(0,10) + ')'" :value="item.id"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="经办人"><el-input v-model="inboundTemplateForm.handler" placeholder="请输入经办人"></el-input></el-form-item>
+            <el-form-item label="备注"><el-input v-model="inboundTemplateForm.remark" type="textarea" :rows="2"></el-input></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="inboundTemplateDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="generateInboundExcel">生成Excel</el-button>
+            <el-button type="success" @click="generateInboundPdf">生成PDF</el-button>
+        </template>
+    </el-dialog>
+
+    <!-- 出库单模板对话框 -->
+    <el-dialog v-model="outboundTemplateDialogVisible" title="生成出库单" width="600px">
+        <el-form :model="outboundTemplateForm" label-width="100px">
+            <el-form-item label="单据编号"><el-input v-model="outboundTemplateForm.docNo" placeholder="自动生成或手动输入"></el-input></el-form-item>
+            <el-form-item label="出库日期"><el-date-picker v-model="outboundTemplateForm.date" type="date" value-format="YYYY-MM-DD" style="width:100%"></el-date-picker></el-form-item>
+            <el-form-item label="领用部门"><el-input v-model="outboundTemplateForm.department" placeholder="请输入领用部门"></el-input></el-form-item>
+            <el-form-item label="选择出库记录">
+                <el-select v-model="outboundTemplateForm.selectedIds" multiple placeholder="选择要包含的出库记录" style="width:100%" filterable>
+                    <el-option v-for="item in outboundData" :key="item.id" :label="item.productName + ' - ' + item.outboundQty + item.unit + ' (' + (item.outboundDate||'').substring(0,10) + ')'" :value="item.id"></el-option>
+                </el-select>
+            </el-form-item>
+            <el-form-item label="经办人"><el-input v-model="outboundTemplateForm.handler" placeholder="请输入经办人"></el-input></el-form-item>
+            <el-form-item label="备注"><el-input v-model="outboundTemplateForm.remark" type="textarea" :rows="2"></el-input></el-form-item>
+        </el-form>
+        <template #footer>
+            <el-button @click="outboundTemplateDialogVisible = false">取消</el-button>
+            <el-button type="primary" @click="generateOutboundExcel">生成Excel</el-button>
+            <el-button type="success" @click="generateOutboundPdf">生成PDF</el-button>
+        </template>
+    </el-dialog>
 </div>
 
 <script>
     const { createApp, ref, computed, onMounted, watch } = Vue;
 
-    // 配置 axios 拦截器，自动添加 X-User-Id header
     axios.interceptors.request.use(config => {
         const userStr = localStorage.getItem('wms_user');
         if (userStr) {
@@ -312,12 +786,8 @@
         setup() {
             const activeMenu = ref('Dashboard');
             const currentUser = ref({ username: '', roleType: 0, id: null });
-            
-            const roleMap = {
-                0: '普通用户(仅查看)',
-                1: '库存管理员',
-                2: '超级管理员'
-            };
+
+            const roleMap = { 0: '普通用户(仅查看)', 1: '库存管理员', 2: '超级管理员' };
 
             const alertTotal = ref({ lessThanFiveCount: 0, equalsZeroCount: 0, lessThanZeroCount: 0});
             const alertData = ref([]);
@@ -327,15 +797,15 @@
             const inventoryData = ref([]);
             const overviewData = ref([]);
             const userData = ref([]);
+            const inventoryOptions = ref([]);
 
-            // 搜索变量
             const searchBasicInfo = ref('');
             const searchInbound = ref('');
             const searchInboundDate = ref([]);
             const searchOutbound = ref('');
             const searchInventory = ref('');
+            const userFilterType = ref('all');
 
-            // 分页变量
             const pageSize = ref(10);
             const pageSizes = [5, 10, 15, 20, 25, 30];
             const currentPageBasicInfo = ref(1);
@@ -345,7 +815,193 @@
             const currentPageOverview = ref(1);
             const currentPageUser = ref(1);
 
-            // 计算属性：过滤后的数据
+            // 基础信息
+            const basicInfoData = ref([]);
+            const totalBasicAmount = ref("0.00");
+            const loadingBasicInfo = ref(false);
+
+            // 对话框
+            const basicInfoDialogVisible = ref(false);
+            const basicInfoForm = ref({});
+            const inboundDialogVisible = ref(false);
+            const inboundForm = ref({});
+            const outboundDialogVisible = ref(false);
+            const outboundForm = ref({});
+            const inventoryDialogVisible = ref(false);
+            const inventoryForm = ref({});
+            const auditDialogVisible = ref(false);
+            const auditForm = ref({ userId: null, username: '', roleType: 0 });
+            const roleDialogVisible = ref(false);
+            const roleForm = ref({ userId: null, username: '', roleType: 0 });
+
+            // 模板管理
+            const templateTab = ref('inbound');
+            const inboundTemplate = ref({
+                prefix: 'RK', dateFormat: 'YYYYMMDD', seqLength: 4,
+                title: '入库单', companyName: '',
+                handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注'
+            });
+            const outboundTemplate = ref({
+                prefix: 'CK', dateFormat: 'YYYYMMDD', seqLength: 4,
+                title: '出库单', companyName: '',
+                handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注'
+            });
+            const inboundFieldOptions = ref([
+                { key: 'id', label: 'ID', checked: true },
+                { key: 'productName', label: '品名', checked: true },
+                { key: 'specification', label: '规格型号', checked: true },
+                { key: 'unit', label: '单位', checked: true },
+                { key: 'inboundQty', label: '数量', checked: true },
+                { key: 'price', label: '单价', checked: true },
+                { key: 'inboundAmount', label: '金额', checked: true },
+                { key: 'supplier', label: '供应商', checked: false },
+                { key: 'remark', label: '备注', checked: false }
+            ]);
+            const outboundFieldOptions = ref([
+                { key: 'id', label: 'ID', checked: true },
+                { key: 'productName', label: '品名', checked: true },
+                { key: 'specification', label: '规格型号', checked: true },
+                { key: 'unit', label: '单位', checked: true },
+                { key: 'outboundQty', label: '数量', checked: true },
+                { key: 'price', label: '单价', checked: true },
+                { key: 'outboundAmount', label: '金额', checked: true },
+                { key: 'purpose', label: '用途', checked: true },
+                { key: 'supplier', label: '供应商', checked: false },
+                { key: 'remark', label: '备注', checked: false }
+            ]);
+
+            // 编号预览
+            const previewInboundDocNo = computed(() => {
+                const t = inboundTemplate.value;
+                let dateStr = '';
+                if (t.dateFormat === 'YYYYMMDD') dateStr = new Date().toISOString().substring(0,10).replace(/-/g,'');
+                else if (t.dateFormat === 'YYMMDD') dateStr = new Date().toISOString().substring(2,10).replace(/-/g,'');
+                return t.prefix + dateStr + '0'.repeat(t.seqLength - 1) + '1';
+            });
+            const previewOutboundDocNo = computed(() => {
+                const t = outboundTemplate.value;
+                let dateStr = '';
+                if (t.dateFormat === 'YYYYMMDD') dateStr = new Date().toISOString().substring(0,10).replace(/-/g,'');
+                else if (t.dateFormat === 'YYMMDD') dateStr = new Date().toISOString().substring(2,10).replace(/-/g,'');
+                return t.prefix + dateStr + '0'.repeat(t.seqLength - 1) + '1';
+            });
+
+            // 加载模板配置
+            const loadTemplates = () => {
+                const savedInbound = localStorage.getItem('wms_inbound_template');
+                const savedOutbound = localStorage.getItem('wms_outbound_template');
+                const savedInboundFields = localStorage.getItem('wms_inbound_fields');
+                const savedOutboundFields = localStorage.getItem('wms_outbound_fields');
+                if (savedInbound) inboundTemplate.value = JSON.parse(savedInbound);
+                if (savedOutbound) outboundTemplate.value = JSON.parse(savedOutbound);
+                if (savedInboundFields) inboundFieldOptions.value = JSON.parse(savedInboundFields);
+                if (savedOutboundFields) outboundFieldOptions.value = JSON.parse(savedOutboundFields);
+            };
+            const saveInboundTemplate = () => {
+                localStorage.setItem('wms_inbound_template', JSON.stringify(inboundTemplate.value));
+                localStorage.setItem('wms_inbound_fields', JSON.stringify(inboundFieldOptions.value));
+                ElementPlus.ElMessage.success('入库单模板保存成功');
+            };
+            const saveOutboundTemplate = () => {
+                localStorage.setItem('wms_outbound_template', JSON.stringify(outboundTemplate.value));
+                localStorage.setItem('wms_outbound_fields', JSON.stringify(outboundFieldOptions.value));
+                ElementPlus.ElMessage.success('出库单模板保存成功');
+            };
+            const resetInboundTemplate = () => {
+                inboundTemplate.value = { prefix: 'RK', dateFormat: 'YYYYMMDD', seqLength: 4, title: '入库单', companyName: '', handlerLabel: '经办人', approverLabel: '审核人', remarkLabel: '备注' };
+                inboundFieldOptions.value = [
+                    { key: 'id', label: 'ID', checked: true }, { key: 'productName', label: '品名', checked: true },
+                    { key: 'specification', label: '规格型号', checked: true }, { key: 'unit', label: '单位', checked: true },
+                    { key: 'inboundQty', label: '数量', checked: true }, { key: 'price', label: '单价', checked: true },
+                    { key: 'inboundAmount', label: '金额', checked: true }, { key: 'supplier', label: '供应商', checked: false },
+                    { key: 'remark', label: '备注', checked: false }
+                ];
+                localStorage.removeItem('wms_inbound_template');
+                localStorage.removeItem('wms_inbound_fields');
+                ElementPlus.ElMessage.success('入库单模板已恢复默认');
+            };
+            const resetOutboundTemplate = () => {
+                outboundTemplate.value = { prefix: 'CK', dateFormat: 'YYYYMMDD', seqLength: 4, title: '出库单', companyName: '', handlerLabel: '经办人', receiverLabel: '领用人', remarkLabel: '备注' };
+                outboundFieldOptions.value = [
+                    { key: 'id', label: 'ID', checked: true }, { key: 'productName', label: '品名', checked: true },
+                    { key: 'specification', label: '规格型号', checked: true }, { key: 'unit', label: '单位', checked: true },
+                    { key: 'outboundQty', label: '数量', checked: true }, { key: 'price', label: '单价', checked: true },
+                    { key: 'outboundAmount', label: '金额', checked: true }, { key: 'purpose', label: '用途', checked: true },
+                    { key: 'supplier', label: '供应商', checked: false }, { key: 'remark', label: '备注', checked: false }
+                ];
+                localStorage.removeItem('wms_outbound_template');
+                localStorage.removeItem('wms_outbound_fields');
+                ElementPlus.ElMessage.success('出库单模板已恢复默认');
+            };
+
+            // 生成单据编号
+            const generateDocNo = (type) => {
+                const t = type === 'inbound' ? inboundTemplate.value : outboundTemplate.value;
+                let dateStr = '';
+                if (t.dateFormat === 'YYYYMMDD') dateStr = new Date().toISOString().substring(0,10).replace(/-/g,'');
+                else if (t.dateFormat === 'YYMMDD') dateStr = new Date().toISOString().substring(2,10).replace(/-/g,'');
+                const seq = String(Math.floor(Math.random() * Math.pow(10, t.seqLength))).padStart(t.seqLength, '0');
+                return t.prefix + dateStr + seq;
+            };
+
+            // 模板对话框
+            const inboundTemplateDialogVisible = ref(false);
+            const inboundTemplateForm = ref({ docNo: '', date: '', supplier: '', selectedIds: [], handler: '', remark: '' });
+            const outboundTemplateDialogVisible = ref(false);
+            const outboundTemplateForm = ref({ docNo: '', date: '', department: '', selectedIds: [], handler: '', remark: '' });
+
+            const selectedInventoryStock = ref(99999);
+
+            // 操作日志
+            const operationLogs = ref([]);
+            const loadingLogs = ref(false);
+            const logFilter = ref({ module: '', opType: '', operator: '' });
+            const logPagination = ref({ page: 1, size: 20, total: 0 });
+
+            const fetchOperationLogs = () => {
+                loadingLogs.value = true;
+                const params = new URLSearchParams({
+                    page: logPagination.value.page,
+                    size: logPagination.value.size,
+                });
+                if (logFilter.value.module) params.append('module', logFilter.value.module);
+                if (logFilter.value.opType) params.append('opType', logFilter.value.opType);
+                if (logFilter.value.operator) params.append('operator', logFilter.value.operator);
+                axios.get('/api/log/list?' + params.toString()).then(res => {
+                    if (res.data.code === 200) {
+                        operationLogs.value = res.data.data.list || [];
+                        logPagination.value.total = res.data.data.total || 0;
+                    }
+                }).catch(err => console.error(err)).finally(() => loadingLogs.value = false);
+            };
+
+            const formatDateTime = (dateStr) => {
+                if (!dateStr) return '';
+                const d = new Date(dateStr);
+                return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            };
+
+            const getModuleLabel = (module) => {
+                const map = { inbound: '入库', outbound: '出库', inventory: '库存', template: '模板', basic_info: '基础信息' };
+                return map[module] || module;
+            };
+
+            const getModuleTagType = (module) => {
+                const map = { inbound: 'success', outbound: 'warning', inventory: 'primary', template: 'info', basic_info: '' };
+                return map[module] || '';
+            };
+
+            const getOpTypeLabel = (opType) => {
+                const map = { ADD: '新增', UPDATE: '更新', DELETE: '删除', EXPORT: '导出' };
+                return map[opType] || opType;
+            };
+
+            const getOpTypeTagType = (opType) => {
+                const map = { ADD: 'success', UPDATE: 'warning', DELETE: 'danger', EXPORT: 'info' };
+                return map[opType] || '';
+            };
+
+            // 计算属性
             const filteredBasicInfo = computed(() => {
                 let data = basicInfoData.value;
                 if (searchBasicInfo.value) {
@@ -407,27 +1063,34 @@
                 return overviewData.value.slice(start, start + pageSize.value);
             });
 
+            const filteredUserData = computed(() => {
+                if (userFilterType.value === 'pending') return userData.value.filter(u => u.status === 0);
+                if (userFilterType.value === 'approved') return userData.value.filter(u => u.status === 1);
+                return userData.value;
+            });
             const pagedUserData = computed(() => {
                 const start = (currentPageUser.value - 1) * pageSize.value;
-                return userData.value.slice(start, start + pageSize.value);
+                return filteredUserData.value.slice(start, start + pageSize.value);
             });
 
             const totalInboundAmount = computed(() => {
-                return inboundData.value.reduce((sum, item) => sum + item.amount, 0).toFixed(2);
+                return inboundData.value.reduce((sum, item) => sum + (parseFloat(item.inboundAmount) || 0), 0).toFixed(2);
+            });
+            const totalOutboundAmount = computed(() => {
+                return outboundData.value.reduce((sum, item) => sum + (parseFloat(item.outboundAmount) || 0), 0).toFixed(2);
+            });
+            const totalInventoryAmount = computed(() => {
+                return inventoryData.value.reduce((sum, item) => sum + (parseFloat(item.stockAmount) || 0), 0).toFixed(2);
             });
 
-            // 补充的接口
-            const fetchDashboard = () => { axios.get('/api/inventory/warnings').then(res => { if(res.data.code === 200) { alertTotal.value = res.data.data; alertData.value = [...(res.data.data.lessThanFive||[]), ...(res.data.data.equalsZero||[]), ...(res.data.data.lessThanZero||[])]; } }).catch(err => {console.error(err)}) };
-            const fetchInbound = () => { axios.get('/api/inbound/list').then(res => { if(res.data.code === 200) inboundData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
-            const fetchOutbound = () => { axios.get('/api/outbound/list').then(res => { if(res.data.code === 200) outboundData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
-            const fetchInventory = () => { axios.get('/api/inventory/list').then(res => { if(res.data.code === 200) inventoryData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
-            const fetchOverview = () => { axios.get('/api/overview/year').then(res => { if(res.data.code === 200) overviewData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
-            const fetchUserManager = () => { axios.get('/api/user/list').then(res => { if(res.data.code === 200) userData.value = res.data.data.list || res.data.data || []; }).catch(err => {console.error(err)})  };
-
-            // 基础信息
-            const basicInfoData = ref([]);
-            const totalBasicAmount = ref("0.00");
-            const loadingBasicInfo = ref(false);
+            // API 调用
+            const fetchDashboard = () => { axios.get('/api/inventory/warnings').then(res => { if(res.data.code === 200) { alertTotal.value = res.data.data; alertData.value = [...(res.data.data.lessThanFive||[]), ...(res.data.data.equalsZero||[]), ...(res.data.data.lessThanZero||[])]; } }).catch(err => console.error(err)) };
+            const fetchInbound = () => { axios.get('/api/inbound/list').then(res => { if(res.data.code === 200) inboundData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchOutbound = () => { axios.get('/api/outbound/list').then(res => { if(res.data.code === 200) outboundData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchInventory = () => { axios.get('/api/inventory/list').then(res => { if(res.data.code === 200) inventoryData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchOverview = () => { axios.get('/api/overview/year').then(res => { if(res.data.code === 200) overviewData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchUserManager = () => { axios.get('/api/user/list').then(res => { if(res.data.code === 200) userData.value = res.data.data.list || res.data.data || []; }).catch(err => console.error(err)) };
+            const fetchInventoryOptions = () => { axios.get('/api/inventory/options').then(res => { if(res.data.code === 200) inventoryOptions.value = res.data.data || []; }).catch(err => console.error(err)) };
 
             const fetchBasicInfo = () => {
                 loadingBasicInfo.value = true;
@@ -435,12 +1098,8 @@
                     if(res.data.code === 200) {
                         basicInfoData.value = res.data.data.list;
                         totalBasicAmount.value = res.data.data.totalAmount ? parseFloat(res.data.data.totalAmount).toFixed(2) : "0.00";
-                    } 
-                }).catch(err => {
-                    // console.error(err)
-                }).finally(() => {
-                    loadingBasicInfo.value = false;
-                });
+                    }
+                }).catch(err => {}).finally(() => { loadingBasicInfo.value = false; });
             };
 
             onMounted(() => {
@@ -450,18 +1109,19 @@
                 } else {
                     currentUser.value = JSON.parse(userStr);
                 }
-                fetchBasicInfo(); fetchDashboard(); fetchInbound(); fetchOutbound(); fetchInventory(); fetchOverview(); fetchUserManager();
+                fetchBasicInfo(); fetchDashboard(); fetchInbound(); fetchOutbound(); fetchInventory(); fetchOverview(); fetchUserManager(); fetchInventoryOptions(); loadTemplates();
             });
 
             const handleMenuSelect = (index) => {
                 activeMenu.value = index;
                 if(index === 'BasicInfo') fetchBasicInfo();
                 else if(index === 'Dashboard') fetchDashboard();
-                else if(index === 'Inbound') fetchInbound();
-                else if(index === 'Outbound') fetchOutbound();
+                else if(index === 'Inbound') { fetchInbound(); fetchInventoryOptions(); }
+                else if(index === 'Outbound') { fetchOutbound(); fetchInventoryOptions(); }
                 else if(index === 'Inventory') fetchInventory();
                 else if(index === 'Overview') fetchOverview();
                 else if(index === 'UserManager') fetchUserManager();
+                else if(index === 'TemplateManager') loadTemplates();
             };
 
             const handleCommand = (command) => {
@@ -471,23 +1131,461 @@
                 }
             };
 
+            // 基础信息操作
+            const openBasicInfoDialog = (row) => {
+                if (row) {
+                    basicInfoForm.value = { ...row };
+                } else {
+                    basicInfoForm.value = { productName: '', category: '', price: 0, unit: '', specification: '', supplier: '', initStock: 0, certNo: '', prodDate: '', validDate: '', remark: '' };
+                }
+                basicInfoDialogVisible.value = true;
+            };
+            const submitBasicInfo = () => {
+                if (!basicInfoForm.value.productName) { ElementPlus.ElMessage.error('品名不能为空'); return; }
+                const url = basicInfoForm.value.id ? '/api/basicInfo/update' : '/api/basicInfo/add';
+                const method = basicInfoForm.value.id ? 'put' : 'post';
+                axios[method](url, basicInfoForm.value).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
+                        basicInfoDialogVisible.value = false;
+                        fetchBasicInfo();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+            const deleteBasicInfo = (row) => {
+                ElementPlus.ElMessageBox.confirm('确定要删除该基础信息吗？', '提示', { type: 'warning' }).then(() => {
+                    axios.delete('/api/basicInfo/delete/' + row.id).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('删除成功');
+                            fetchBasicInfo();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '删除失败');
+                        }
+                    });
+                }).catch(() => {});
+            };
+
+            // 入库操作
+            const openInboundDialog = (row) => {
+                fetchInventoryOptions();
+                if (row) {
+                    inboundForm.value = { ...row, inboundDate: row.inboundDate ? row.inboundDate.substring(0, 10) : '' };
+                } else {
+                    inboundForm.value = { inventoryId: null, inboundDate: new Date().toISOString().substring(0, 10), inboundQty: 1, remark: '' };
+                }
+                inboundDialogVisible.value = true;
+            };
+            const onInboundInventoryChange = (val) => {
+                const item = inventoryOptions.value.find(i => i.id === val);
+                if (item) {
+                    inboundForm.value.productName = item.productName;
+                }
+            };
+            const submitInbound = () => {
+                if (!inboundForm.value.inventoryId || !inboundForm.value.inboundDate || !inboundForm.value.inboundQty) {
+                    ElementPlus.ElMessage.error('请填写完整信息'); return;
+                }
+                const url = inboundForm.value.id ? '/api/inbound/update' : '/api/inbound/add';
+                const method = inboundForm.value.id ? 'put' : 'post';
+                axios[method](url, inboundForm.value).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
+                        inboundDialogVisible.value = false;
+                        fetchInbound(); fetchInventory(); fetchInventoryOptions();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+            const deleteInbound = (row) => {
+                ElementPlus.ElMessageBox.confirm('确定要删除该入库记录吗？删除后库存将自动扣减。', '提示', { type: 'warning' }).then(() => {
+                    axios.delete('/api/inbound/delete/' + row.id).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('删除成功');
+                            fetchInbound(); fetchInventory(); fetchInventoryOptions();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '删除失败');
+                        }
+                    });
+                }).catch(() => {});
+            };
+
+            // 出库操作
+            const openOutboundDialog = (row) => {
+                fetchInventoryOptions();
+                if (row) {
+                    outboundForm.value = { ...row, outboundDate: row.outboundDate ? row.outboundDate.substring(0, 10) : '' };
+                    const item = inventoryOptions.value.find(i => i.id === row.inventoryId);
+                    selectedInventoryStock.value = item ? item.currentStockQty + (row.outboundQty || 0) : 99999;
+                } else {
+                    outboundForm.value = { inventoryId: null, outboundDate: new Date().toISOString().substring(0, 10), outboundQty: 1, purpose: '', remark: '' };
+                    selectedInventoryStock.value = 99999;
+                }
+                outboundDialogVisible.value = true;
+            };
+            const onOutboundInventoryChange = (val) => {
+                const item = inventoryOptions.value.find(i => i.id === val);
+                if (item) {
+                    outboundForm.value.productName = item.productName;
+                    selectedInventoryStock.value = item.currentStockQty;
+                }
+            };
+            const submitOutbound = () => {
+                if (!outboundForm.value.inventoryId || !outboundForm.value.outboundDate || !outboundForm.value.outboundQty) {
+                    ElementPlus.ElMessage.error('请填写完整信息'); return;
+                }
+                const url = outboundForm.value.id ? '/api/outbound/update' : '/api/outbound/add';
+                const method = outboundForm.value.id ? 'put' : 'post';
+                axios[method](url, outboundForm.value).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
+                        outboundDialogVisible.value = false;
+                        fetchOutbound(); fetchInventory(); fetchInventoryOptions();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+            const deleteOutbound = (row) => {
+                ElementPlus.ElMessageBox.confirm('确定要删除该出库记录吗？删除后库存将自动恢复。', '提示', { type: 'warning' }).then(() => {
+                    axios.delete('/api/outbound/delete/' + row.id).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('删除成功');
+                            fetchOutbound(); fetchInventory(); fetchInventoryOptions();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '删除失败');
+                        }
+                    });
+                }).catch(() => {});
+            };
+
+            // 库存操作
+            const openInventoryDialog = (row) => {
+                if (row) {
+                    inventoryForm.value = { ...row };
+                } else {
+                    inventoryForm.value = { productName: '', price: 0, specification: '', supplier: '', unit: '', initStockQty: 0, safeStockQty: 5, remark: '' };
+                }
+                inventoryDialogVisible.value = true;
+            };
+            const submitInventory = () => {
+                if (!inventoryForm.value.productName) { ElementPlus.ElMessage.error('品名不能为空'); return; }
+                axios.post('/api/inventory/save', inventoryForm.value).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success(res.data.data || '操作成功');
+                        inventoryDialogVisible.value = false;
+                        fetchInventory(); fetchInventoryOptions();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+
+            // 用户审核操作
+            const openAuditDialog = (row, status) => {
+                auditForm.value = { userId: row.id, username: row.username, roleType: 0 };
+                auditDialogVisible.value = true;
+            };
+            const submitAudit = () => {
+                axios.post('/api/user/audit', { userId: auditForm.value.userId, status: 1, roleType: auditForm.value.roleType }).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success('审核通过');
+                        auditDialogVisible.value = false;
+                        fetchUserManager();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+            const auditUser = (userId, status) => {
+                const msg = status === 2 ? '确定要拒绝该用户的注册申请吗？' : '确定要通过该用户吗？';
+                ElementPlus.ElMessageBox.confirm(msg, '提示', { type: 'warning' }).then(() => {
+                    axios.post('/api/user/audit', { userId, status }).then(res => {
+                        if (res.data.code === 200) {
+                            ElementPlus.ElMessage.success('操作成功');
+                            fetchUserManager();
+                        } else {
+                            ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                        }
+                    });
+                }).catch(() => {});
+            };
+            const openRoleDialog = (row) => {
+                roleForm.value = { userId: row.id, username: row.username, roleType: row.roleType };
+                roleDialogVisible.value = true;
+            };
+            const submitRoleChange = () => {
+                axios.post('/api/user/role', { userId: roleForm.value.userId, roleType: roleForm.value.roleType }).then(res => {
+                    if (res.data.code === 200) {
+                        ElementPlus.ElMessage.success('角色修改成功');
+                        roleDialogVisible.value = false;
+                        fetchUserManager();
+                    } else {
+                        ElementPlus.ElMessage.error(res.data.msg || '操作失败');
+                    }
+                }).catch(err => ElementPlus.ElMessage.error('请求失败'));
+            };
+
+            // Excel导出
+            const exportBasicInfoExcel = () => {
+                const data = filteredBasicInfo.value.map(item => ({
+                    'ID': item.id, '品名': item.productName, '分类': item.category, '价格': item.price,
+                    '规格型号': item.specification, '供应商': item.supplier, '单位': item.unit,
+                    '期初库存': item.initStock, '金额': item.amount, '证书编号': item.certNo,
+                    '生产日期': item.prodDate, '有效期': item.validDate, '备注': item.remark
+                }));
+                downloadExcel(data, '基础信息表');
+            };
+            const exportInboundExcel = () => {
+                const data = filteredInbound.value.map(item => ({
+                    'ID': item.id, '入库日期': item.inboundDate ? item.inboundDate.substring(0, 10) : '',
+                    '品名': item.productName, '价格': item.price, '规格型号': item.specification,
+                    '供应商': item.supplier, '单位': item.unit, '入库数量': item.inboundQty,
+                    '入库金额': item.inboundAmount, '备注': item.remark
+                }));
+                downloadExcel(data, '入库明细表');
+            };
+            const exportOutboundExcel = () => {
+                const data = filteredOutbound.value.map(item => ({
+                    'ID': item.id, '出库日期': item.outboundDate ? item.outboundDate.substring(0, 10) : '',
+                    '品名': item.productName, '规格型号': item.specification, '供应商': item.supplier,
+                    '单位': item.unit, '出库数量': item.outboundQty, '出库金额': item.outboundAmount,
+                    '用途': item.purpose, '备注': item.remark
+                }));
+                downloadExcel(data, '出库明细表');
+            };
+            const exportInventoryExcel = () => {
+                const data = filteredInventory.value.map(item => ({
+                    'ID': item.id, '品名': item.productName, '单价': item.price, '规格型号': item.specification,
+                    '供应商': item.supplier, '单位': item.unit, '期初库存': item.initStockQty,
+                    '现有库存': item.currentStockQty, '安全库存': item.safeStockQty, '备注': item.remark
+                }));
+                downloadExcel(data, '库存明细表');
+            };
+            const exportOverviewExcel = () => {
+                const data = overviewData.value.map(item => {
+                    const row = { '品名': item.productName, '期初量': item.initStockQty };
+                    for (let m = 1; m <= 12; m++) {
+                        row[m + '月入库'] = item['m' + m + 'InQty'] || 0;
+                        row[m + '月出库'] = item['m' + m + 'OutQty'] || 0;
+                        row[m + '月结存'] = item['m' + m + 'BalanceQty'] || 0;
+                    }
+                    return row;
+                });
+                downloadExcel(data, '出入库总览表');
+            };
+
+            const downloadExcel = (data, filename) => {
+                const ws = XLSX.utils.json_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+                XLSX.writeFile(wb, filename + '_' + new Date().toISOString().substring(0, 10) + '.xlsx');
+            };
+
+            // 入库单模板
+            const openInboundTemplateDialog = () => {
+                loadTemplates();
+                inboundTemplateForm.value = {
+                    docNo: generateDocNo('inbound'),
+                    date: new Date().toISOString().substring(0, 10),
+                    supplier: '', selectedIds: [], handler: currentUser.value.username, remark: '', approver: ''
+                };
+                inboundTemplateDialogVisible.value = true;
+            };
+            const generateInboundExcel = () => {
+                const selectedItems = inboundData.value.filter(item => inboundTemplateForm.value.selectedIds.includes(item.id));
+                if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择入库记录'); return; }
+                const t = inboundTemplate.value;
+                const fields = inboundFieldOptions.value.filter(f => f.checked);
+                const headers = fields.map(f => f.label);
+                const data = [
+                    [t.title],
+                    [t.companyName],
+                    ['单据编号：' + inboundTemplateForm.value.docNo, '', '日期：' + inboundTemplateForm.value.date],
+                    ['供应商：' + inboundTemplateForm.value.supplier],
+                    [],
+                    headers,
+                    ...selectedItems.map((item, idx) => fields.map(f => f.key === 'id' ? idx + 1 : item[f.key] || '')),
+                    [],
+                    ['合计金额：' + selectedItems.reduce((sum, item) => sum + parseFloat(item.inboundAmount || 0), 0).toFixed(2)],
+                    [t.handlerLabel + '：' + inboundTemplateForm.value.handler, '', t.remarkLabel + '：' + inboundTemplateForm.value.remark]
+                ];
+                const ws = XLSX.utils.aoa_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, t.title);
+                XLSX.writeFile(wb, t.title + '_' + inboundTemplateForm.value.docNo + '.xlsx');
+                inboundTemplateDialogVisible.value = false;
+            };
+            const generateInboundPdf = () => {
+                const selectedItems = inboundData.value.filter(item => inboundTemplateForm.value.selectedIds.includes(item.id));
+                if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择入库记录'); return; }
+                const t = inboundTemplate.value;
+                const fields = inboundFieldOptions.value.filter(f => f.checked);
+                const total = selectedItems.reduce((sum, item) => sum + parseFloat(item.inboundAmount || 0), 0).toFixed(2);
+
+                let html = `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 20px; width: 750px;">
+                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
+                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
+                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
+                        <span>单据编号：${inboundTemplateForm.value.docNo}</span>
+                        <span>日期：${inboundTemplateForm.value.date}</span>
+                    </div>
+                    <p style="font-size: 14px; margin: 10px 0;">供应商：${inboundTemplateForm.value.supplier || ''}</p>
+                    <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px;">
+                        <thead><tr style="background-color: #f0f0f0;">
+                            ${fields.map(f => `<th style="border: 1px solid #333; padding: 8px;">${f.label}</th>`).join('')}
+                        </tr></thead>
+                        <tbody>
+                            ${selectedItems.map((item, idx) => `<tr>
+                                ${fields.map(f => `<td style="border: 1px solid #333; padding: 6px; text-align: center;">${f.key === 'id' ? idx + 1 : item[f.key] || ''}</td>`).join('')}
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <span>${t.handlerLabel}：${inboundTemplateForm.value.handler}</span>
+                        <span>${t.approverLabel}：${inboundTemplateForm.value.approver || ''}</span>
+                    </div>
+                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${inboundTemplateForm.value.remark || ''}</p>
+                </div>`;
+
+                const container = document.getElementById('pdfContainer');
+                container.innerHTML = html;
+                container.style.left = '0';
+
+                html2pdf().set({
+                    margin: 10, filename: t.title + '_' + inboundTemplateForm.value.docNo + '.pdf',
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                }).from(container).save().then(() => {
+                    container.style.left = '-9999px';
+                    container.innerHTML = '';
+                    inboundTemplateDialogVisible.value = false;
+                    ElementPlus.ElMessage.success('PDF生成成功');
+                });
+            };
+
+            // 出库单模板
+            const openOutboundTemplateDialog = () => {
+                loadTemplates();
+                outboundTemplateForm.value = {
+                    docNo: generateDocNo('outbound'),
+                    date: new Date().toISOString().substring(0, 10),
+                    department: '', selectedIds: [], handler: currentUser.value.username, remark: '', receiver: ''
+                };
+                outboundTemplateDialogVisible.value = true;
+            };
+            const generateOutboundExcel = () => {
+                const selectedItems = outboundData.value.filter(item => outboundTemplateForm.value.selectedIds.includes(item.id));
+                if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择出库记录'); return; }
+                const t = outboundTemplate.value;
+                const fields = outboundFieldOptions.value.filter(f => f.checked);
+                const headers = fields.map(f => f.label);
+                const data = [
+                    [t.title],
+                    [t.companyName],
+                    ['单据编号：' + outboundTemplateForm.value.docNo, '', '日期：' + outboundTemplateForm.value.date],
+                    ['领用部门：' + outboundTemplateForm.value.department],
+                    [],
+                    headers,
+                    ...selectedItems.map((item, idx) => fields.map(f => f.key === 'id' ? idx + 1 : item[f.key] || '')),
+                    [],
+                    ['合计金额：' + selectedItems.reduce((sum, item) => sum + parseFloat(item.outboundAmount || 0), 0).toFixed(2)],
+                    [t.handlerLabel + '：' + outboundTemplateForm.value.handler, '', t.remarkLabel + '：' + outboundTemplateForm.value.remark]
+                ];
+                const ws = XLSX.utils.aoa_to_sheet(data);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, t.title);
+                XLSX.writeFile(wb, t.title + '_' + outboundTemplateForm.value.docNo + '.xlsx');
+                outboundTemplateDialogVisible.value = false;
+            };
+            const generateOutboundPdf = () => {
+                const selectedItems = outboundData.value.filter(item => outboundTemplateForm.value.selectedIds.includes(item.id));
+                if (selectedItems.length === 0) { ElementPlus.ElMessage.error('请选择出库记录'); return; }
+                const t = outboundTemplate.value;
+                const fields = outboundFieldOptions.value.filter(f => f.checked);
+                const total = selectedItems.reduce((sum, item) => sum + parseFloat(item.outboundAmount || 0), 0).toFixed(2);
+
+                let html = `<div style="font-family: SimSun, Microsoft YaHei, sans-serif; padding: 20px; width: 750px;">
+                    <h2 style="text-align: center; margin-bottom: 5px;">${t.title}</h2>
+                    ${t.companyName ? `<p style="text-align: center; margin: 5px 0;">${t.companyName}</p>` : ''}
+                    <div style="display: flex; justify-content: space-between; margin: 15px 0; font-size: 14px;">
+                        <span>单据编号：${outboundTemplateForm.value.docNo}</span>
+                        <span>日期：${outboundTemplateForm.value.date}</span>
+                    </div>
+                    <p style="font-size: 14px; margin: 10px 0;">领用部门：${outboundTemplateForm.value.department || ''}</p>
+                    <table style="width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 12px;">
+                        <thead><tr style="background-color: #f0f0f0;">
+                            ${fields.map(f => `<th style="border: 1px solid #333; padding: 8px;">${f.label}</th>`).join('')}
+                        </tr></thead>
+                        <tbody>
+                            ${selectedItems.map((item, idx) => `<tr>
+                                ${fields.map(f => `<td style="border: 1px solid #333; padding: 6px; text-align: center;">${f.key === 'id' ? idx + 1 : item[f.key] || ''}</td>`).join('')}
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                    <p style="text-align: right; font-size: 14px; font-weight: bold;">合计金额：${total} 元</p>
+                    <div style="display: flex; justify-content: space-between; margin-top: 30px; font-size: 14px;">
+                        <span>${t.handlerLabel}：${outboundTemplateForm.value.handler}</span>
+                        <span>${t.receiverLabel}：${outboundTemplateForm.value.receiver || ''}</span>
+                    </div>
+                    <p style="font-size: 14px; margin-top: 15px;">${t.remarkLabel}：${outboundTemplateForm.value.remark || ''}</p>
+                </div>`;
+
+                const container = document.getElementById('pdfContainer');
+                container.innerHTML = html;
+                container.style.left = '0';
+
+                html2pdf().set({
+                    margin: 10, filename: t.title + '_' + outboundTemplateForm.value.docNo + '.pdf',
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                }).from(container).save().then(() => {
+                    container.style.left = '-9999px';
+                    container.innerHTML = '';
+                    outboundTemplateDialogVisible.value = false;
+                    ElementPlus.ElMessage.success('PDF生成成功');
+                });
+            };
+
             return {
-                activeMenu, currentUser, roleMap,
-                handleMenuSelect, handleCommand,
-                alertData, inboundData, outboundData, inventoryData, overviewData, userData, alertTotal, totalInboundAmount,
+                activeMenu, currentUser, roleMap, handleMenuSelect, handleCommand,
+                alertData, inboundData, outboundData, inventoryData, overviewData, userData, alertTotal,
+                totalInboundAmount, totalOutboundAmount, totalInventoryAmount,
                 basicInfoData, totalBasicAmount, loadingBasicInfo, fetchBasicInfo,
-                // 搜索变量
-                searchBasicInfo, searchInbound, searchInboundDate, searchOutbound, searchInventory,
-                // 分页变量
+                searchBasicInfo, searchInbound, searchInboundDate, searchOutbound, searchInventory, userFilterType,
                 pageSize, pageSizes,
                 currentPageBasicInfo, currentPageInbound, currentPageOutbound, currentPageInventory, currentPageOverview, currentPageUser,
-                // 分页后数据
                 filteredBasicInfo, pagedBasicInfo, filteredInbound, pagedInbound,
-                filteredOutbound, pagedOutbound, filteredInventory, pagedInventory, pagedOverview, pagedUserData
+                filteredOutbound, pagedOutbound, filteredInventory, pagedInventory, pagedOverview, filteredUserData, pagedUserData,
+                inventoryOptions, selectedInventoryStock,
+                // 对话框
+                basicInfoDialogVisible, basicInfoForm, openBasicInfoDialog, submitBasicInfo, deleteBasicInfo,
+                inboundDialogVisible, inboundForm, openInboundDialog, onInboundInventoryChange, submitInbound, deleteInbound,
+                outboundDialogVisible, outboundForm, openOutboundDialog, onOutboundInventoryChange, submitOutbound, deleteOutbound,
+                inventoryDialogVisible, inventoryForm, openInventoryDialog, submitInventory,
+                auditDialogVisible, auditForm, openAuditDialog, submitAudit, auditUser,
+                roleDialogVisible, roleForm, openRoleDialog, submitRoleChange,
+                // 导出
+                exportBasicInfoExcel, exportInboundExcel, exportOutboundExcel, exportInventoryExcel, exportOverviewExcel,
+                // 模板
+                inboundTemplateDialogVisible, inboundTemplateForm, openInboundTemplateDialog, generateInboundExcel, generateInboundPdf,
+                outboundTemplateDialogVisible, outboundTemplateForm, openOutboundTemplateDialog, generateOutboundExcel, generateOutboundPdf,
+                // 模板管理
+                templateTab, inboundTemplate, outboundTemplate, inboundFieldOptions, outboundFieldOptions,
+                previewInboundDocNo, previewOutboundDocNo, loadTemplates,
+                saveInboundTemplate, saveOutboundTemplate, resetInboundTemplate, resetOutboundTemplate,
+                // 操作日志
+                operationLogs, loadingLogs, logFilter, logPagination, fetchOperationLogs,
+                formatDateTime, getModuleLabel, getModuleTagType, getOpTypeLabel, getOpTypeTagType
             }
         }
     });
-    
+
     for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
         app.component('ep-' + key.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase(), component)
     }
