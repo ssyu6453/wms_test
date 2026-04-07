@@ -144,6 +144,9 @@ public class InboundController {
             Inventory oldInventory = inventoryMapper.selectById(oldInbound.getInventoryId());
             if (oldInventory != null) {
                 int restoredQty = defaultInt(oldInventory.getCurrentStockQty()) - defaultInt(oldInbound.getInboundQty());
+                if (restoredQty < 0) {
+                    return Result.error("库存不足，无法回滚旧入库记录");
+                }
                 oldInventory.setCurrentStockQty(restoredQty);
                 inventoryMapper.updateById(oldInventory);
             }
@@ -191,6 +194,9 @@ public class InboundController {
             Inventory inventory = inventoryMapper.selectById(inbound.getInventoryId());
             if (inventory != null) {
                 int restoredQty = defaultInt(inventory.getCurrentStockQty()) - defaultInt(inbound.getInboundQty());
+                if (restoredQty < 0) {
+                    return Result.error("库存不足，无法删除该入库记录");
+                }
                 inventory.setCurrentStockQty(restoredQty);
                 inventoryMapper.updateById(inventory);
             }

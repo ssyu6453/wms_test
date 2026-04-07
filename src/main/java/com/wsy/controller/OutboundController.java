@@ -89,10 +89,20 @@ public class OutboundController {
         if (outbound.getInventoryId() == null || outbound.getOutboundQty() == null || outbound.getOutboundQty() <= 0 || outbound.getOutboundDate() == null) {
             return Result.error("请填写完整的出库信息");
         }
+        if (outbound.getPurpose() == null || outbound.getPurpose().isBlank()) {
+            return Result.error("用途不能为空");
+        }
 
         Inventory inventory = inventoryMapper.selectById(outbound.getInventoryId());
         if (inventory == null) {
             return Result.error("关联库存物品不存在");
+        }
+        int currentQtyBefore = defaultInt(inventory.getCurrentStockQty());
+        if (currentQtyBefore <= 0) {
+            return Result.error("该物品库存为0，禁止出库");
+        }
+        if (outbound.getOutboundQty() > currentQtyBefore) {
+            return Result.error("出库数量不能大于当前库存");
         }
 
         BigDecimal outboundAmount = safe(inventory.getPrice()).multiply(BigDecimal.valueOf(outbound.getOutboundQty())).setScale(2, RoundingMode.HALF_UP);
@@ -105,7 +115,7 @@ public class OutboundController {
         outbound.setUnit(inventory.getUnit());
         outboundMapper.insert(outbound);
 
-        int currentQty = defaultInt(inventory.getCurrentStockQty()) - outbound.getOutboundQty();
+        int currentQty = currentQtyBefore - outbound.getOutboundQty();
         inventory.setCurrentStockQty(currentQty);
         inventoryMapper.updateById(inventory);
 
@@ -133,6 +143,9 @@ public class OutboundController {
         if (outbound.getOutboundQty() == null || outbound.getOutboundQty() <= 0 || outbound.getOutboundDate() == null) {
             return Result.error("请填写完整的出库信息");
         }
+        if (outbound.getPurpose() == null || outbound.getPurpose().isBlank()) {
+            return Result.error("用途不能为空");
+        }
 
         // 恢复旧的库存数量
         if (oldOutbound.getInventoryId() != null) {
@@ -148,6 +161,13 @@ public class OutboundController {
         if (outbound.getInventoryId() != null) {
             Inventory inventory = inventoryMapper.selectById(outbound.getInventoryId());
             if (inventory != null) {
+                int currentQtyBefore = defaultInt(inventory.getCurrentStockQty());
+                if (currentQtyBefore <= 0) {
+                    return Result.error("该物品库存为0，禁止出库");
+                }
+                if (outbound.getOutboundQty() > currentQtyBefore) {
+                    return Result.error("出库数量不能大于当前库存");
+                }
                 BigDecimal outboundAmount = safe(inventory.getPrice()).multiply(BigDecimal.valueOf(outbound.getOutboundQty())).setScale(2, RoundingMode.HALF_UP);
                 outbound.setOutboundAmount(outboundAmount);
                 outbound.setProductName(inventory.getProductName());
@@ -156,7 +176,7 @@ public class OutboundController {
                 outbound.setSupplier(inventory.getSupplier());
                 outbound.setUnit(inventory.getUnit());
 
-                int currentQty = defaultInt(inventory.getCurrentStockQty()) - outbound.getOutboundQty();
+                int currentQty = currentQtyBefore - outbound.getOutboundQty();
                 inventory.setCurrentStockQty(currentQty);
                 inventoryMapper.updateById(inventory);
                 addLog(user.getUsername(), "UPDATE", "inventory", "出库更新导致库存变更: " + inventory.getProductName() + " -> " + currentQty, inventory.getId());

@@ -10,6 +10,8 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 DROP TABLE IF EXISTS `t_io_overview`;
+DROP TABLE IF EXISTS `t_purchase`;
+DROP TABLE IF EXISTS `t_doc_record`;
 DROP TABLE IF EXISTS `t_basic_info`;
 DROP TABLE IF EXISTS `t_outbound`;
 DROP TABLE IF EXISTS `t_inbound`;
@@ -25,6 +27,7 @@ CREATE TABLE `t_user` (
   `password` VARCHAR(255) NOT NULL COMMENT '密码(MD5加密)',
   `role_type` INT NOT NULL DEFAULT 0 COMMENT '角色: 0=普通用户,1=库存管理员,2=超级管理员',
   `status` INT NOT NULL DEFAULT 0 COMMENT '状态: 0=待审核,1=通过,2=拒绝',
+  `permission_config` TEXT DEFAULT NULL COMMENT '细分权限JSON',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_username` (`username`)
@@ -105,6 +108,29 @@ CREATE TABLE `t_outbound` (
   KEY `idx_outbound_product` (`product_name`),
   KEY `idx_outbound_inventory` (`inventory_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='出库明细表';
+
+-- 4.5) 采购记录表
+CREATE TABLE `t_purchase` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '序号',
+  `purchase_date` DATE NOT NULL COMMENT '采购日期',
+  `product_name` VARCHAR(100) NOT NULL COMMENT '品名',
+  `price` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '价格',
+  `specification` VARCHAR(100) DEFAULT NULL COMMENT '规格型号',
+  `supplier` VARCHAR(100) DEFAULT NULL COMMENT '供应商',
+  `unit` VARCHAR(20) DEFAULT NULL COMMENT '单位',
+  `purchase_qty` INT NOT NULL DEFAULT 0 COMMENT '采购数量',
+  `purchase_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '采购金额',
+  `inventory_id` INT DEFAULT NULL COMMENT '关联库存ID',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/RECEIVED/CANCELED',
+  `operator` VARCHAR(50) DEFAULT NULL COMMENT '操作人',
+  `remark` VARCHAR(255) DEFAULT NULL COMMENT '备注',
+  `receive_time` DATETIME DEFAULT NULL COMMENT '签收时间',
+  `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_purchase_date` (`purchase_date`),
+  KEY `idx_purchase_supplier` (`supplier`),
+  KEY `idx_purchase_status` (`status`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='采购记录表';
 
 -- 5) 出入库总览表（按年+物品）
 CREATE TABLE `t_io_overview` (
@@ -193,6 +219,25 @@ FROM t_inventory;
 -- ALTER TABLE `t_basic_info` MODIFY COLUMN `valid_date` VARCHAR(50) DEFAULT NULL COMMENT '有效期(支持年月格式)';
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `production_date` VARCHAR(50) DEFAULT NULL COMMENT '生产日期(支持年月格式如2024.03)';
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `valid_date` VARCHAR(50) DEFAULT NULL COMMENT '有效期(支持年月格式)';
+-- ALTER TABLE `t_user` ADD COLUMN `permission_config` TEXT NULL COMMENT '细分权限JSON';
+-- CREATE TABLE `t_purchase` (
+--   `id` INT NOT NULL AUTO_INCREMENT,
+--   `purchase_date` DATE NOT NULL,
+--   `product_name` VARCHAR(100) NOT NULL,
+--   `price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+--   `specification` VARCHAR(100) DEFAULT NULL,
+--   `supplier` VARCHAR(100) DEFAULT NULL,
+--   `unit` VARCHAR(20) DEFAULT NULL,
+--   `purchase_qty` INT NOT NULL DEFAULT 0,
+--   `purchase_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+--   `inventory_id` INT DEFAULT NULL,
+--   `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+--   `operator` VARCHAR(50) DEFAULT NULL,
+--   `remark` VARCHAR(255) DEFAULT NULL,
+--   `receive_time` DATETIME DEFAULT NULL,
+--   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+--   PRIMARY KEY (`id`)
+-- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ========================================
 -- 8) 单据模板表
@@ -249,3 +294,25 @@ CREATE TABLE `t_operation_log` (
   KEY `idx_log_module` (`module`),
   KEY `idx_log_operator` (`operator`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表';
+
+-- ========================================
+-- 10) 单据记录表（云端备份/溯源/二次下载）
+-- ========================================
+DROP TABLE IF EXISTS `t_doc_record`;
+CREATE TABLE `t_doc_record` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '单据记录ID',
+  `type` VARCHAR(20) NOT NULL COMMENT '类型: inbound/outbound',
+  `doc_no` VARCHAR(80) NOT NULL COMMENT '单据编号',
+  `file_name` VARCHAR(255) DEFAULT NULL COMMENT '文件名',
+  `relative_path` VARCHAR(255) NOT NULL COMMENT '相对路径，如 source/xxx.pdf',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE/VOID',
+  `source_ids` JSON DEFAULT NULL COMMENT '来源业务ID数组',
+  `operator` VARCHAR(50) DEFAULT NULL COMMENT '操作员',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_doc_record_type` (`type`),
+  KEY `idx_doc_record_doc_no` (`doc_no`),
+  KEY `idx_doc_record_status` (`status`),
+  KEY `idx_doc_record_created_at` (`created_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='单据记录表';

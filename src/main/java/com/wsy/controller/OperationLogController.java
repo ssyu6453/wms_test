@@ -5,11 +5,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wsy.common.AuthSupport;
 import com.wsy.common.Result;
 import com.wsy.entity.OperationLog;
+import com.wsy.entity.User;
 import com.wsy.mapper.OperationLogMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -62,5 +64,33 @@ public class OperationLogController {
         QueryWrapper<OperationLog> wrapper = new QueryWrapper<>();
         wrapper.orderByDesc("create_time").last("LIMIT " + limit);
         return Result.success(logMapper.selectList(wrapper));
+    }
+
+    @PostMapping("/add")
+    public Result<?> add(HttpServletRequest request, @RequestBody Map<String, Object> map) {
+        User user = authSupport.requireLogin(request);
+        String module = map.get("module") == null ? null : String.valueOf(map.get("module"));
+        String opType = map.get("opType") == null ? null : String.valueOf(map.get("opType"));
+        String description = map.get("description") == null ? "" : String.valueOf(map.get("description"));
+        Integer targetId = null;
+        if (map.get("targetId") != null) {
+            try {
+                targetId = Integer.parseInt(String.valueOf(map.get("targetId")));
+            } catch (Exception ignored) {
+            }
+        }
+        if (module == null || module.isBlank() || opType == null || opType.isBlank()) {
+            return Result.error("参数错误");
+        }
+
+        OperationLog log = new OperationLog();
+        log.setOperator(user.getUsername());
+        log.setModule(module);
+        log.setOpType(opType);
+        log.setDescription(description);
+        log.setTargetId(targetId);
+        log.setCreateTime(new Date());
+        logMapper.insert(log);
+        return Result.success("记录成功");
     }
 }

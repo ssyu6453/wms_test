@@ -2,6 +2,7 @@ package com.wsy.common;
 
 import com.wsy.entity.User;
 import com.wsy.mapper.UserMapper;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -14,6 +15,17 @@ public class AuthSupport {
 
     public User requireLogin(HttpServletRequest request) {
         String userIdStr = request.getHeader("X-User-Id");
+        if (userIdStr == null || userIdStr.isBlank()) {
+            Cookie[] cookies = request.getCookies();
+            if (cookies != null) {
+                for (Cookie cookie : cookies) {
+                    if ("wms_user_id".equals(cookie.getName())) {
+                        userIdStr = cookie.getValue();
+                        break;
+                    }
+                }
+            }
+        }
         if (userIdStr == null || userIdStr.isBlank()) {
             throw new RuntimeException("未登录或登录已失效");
         }

@@ -5,12 +5,15 @@ import com.wsy.common.AuthSupport;
 import com.wsy.common.Result;
 import com.wsy.entity.User;
 import com.wsy.mapper.UserMapper;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.DigestUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -27,7 +30,7 @@ public class UserController {
 
     // 登录接口
     @PostMapping("/login")
-    public Result<?> login(@RequestBody Map<String, String> map) {
+    public Result<?> login(@RequestBody Map<String, String> map, HttpServletResponse response) {
         String username = map.get("username");
         String password = map.get("password");
 
@@ -49,7 +52,27 @@ public class UserController {
         }
         
         user.setPassword(null); // 返回时隐藏密码
+        if (user.getPermissionConfig() == null || user.getPermissionConfig().isBlank()) {
+            user.setPermissionConfig(defaultPermissionConfig(user.getRoleType()));
+        }
+
+        Cookie cookie = new Cookie("wms_user_id", String.valueOf(user.getId()));
+        cookie.setPath("/");
+        cookie.setHttpOnly(true);
+        cookie.setMaxAge(7 * 24 * 60 * 60);
+        response.addCookie(cookie);
+
         return Result.success(user);
+    }
+
+    @PostMapping("/logout")
+    public Result<?> logout(HttpServletResponse response) {
+        Cookie cookie = new Cookie("wms_user_id", "");
+        cookie.setPath("/");
+        cookie.setHttpOnly(true);
+        cookie.setMaxAge(0);
+        response.addCookie(cookie);
+        return Result.success("已退出登录");
     }
 
     // 注册接口
@@ -79,6 +102,9 @@ public class UserController {
     public Result<?> me(HttpServletRequest request) {
         User user = authSupport.requireLogin(request);
         user.setPassword(null);
+        if (user.getPermissionConfig() == null || user.getPermissionConfig().isBlank()) {
+            user.setPermissionConfig(defaultPermissionConfig(user.getRoleType()));
+        }
         return Result.success(user);
     }
 
@@ -87,7 +113,12 @@ public class UserController {
         authSupport.requireRole(request, 2);
         QueryWrapper<User> wrapper = new QueryWrapper<>();
         wrapper.eq("status", 0).orderByDesc("create_time");
-        List<User> users = userMapper.selectList(wrapper).stream().peek(item -> item.setPassword(null)).collect(Collectors.toList());
+        List<User> users = userMapper.selectList(wrapper).stream().peek(item -> {
+            item.setPassword(null);
+            if (item.getPermissionConfig() == null || item.getPermissionConfig().isBlank()) {
+                item.setPermissionConfig(defaultPermissionConfig(item.getRoleType()));
+            }
+        }).collect(Collectors.toList());
         return Result.success(users);
     }
 
@@ -96,7 +127,12 @@ public class UserController {
         authSupport.requireRole(request, 2);
         QueryWrapper<User> wrapper = new QueryWrapper<>();
         wrapper.orderByDesc("create_time");
-        List<User> users = userMapper.selectList(wrapper).stream().peek(item -> item.setPassword(null)).collect(Collectors.toList());
+        List<User> users = userMapper.selectList(wrapper).stream().peek(item -> {
+            item.setPassword(null);
+            if (item.getPermissionConfig() == null || item.getPermissionConfig().isBlank()) {
+                item.setPermissionConfig(defaultPermissionConfig(item.getRoleType()));
+            }
+        }).collect(Collectors.toList());
         return Result.success(users);
     }
 
@@ -124,6 +160,9 @@ public class UserController {
                 return Result.error("角色类型无效");
             }
             user.setRoleType(roleType);
+            if (user.getPermissionConfig() == null || user.getPermissionConfig().isBlank()) {
+                user.setPermissionConfig(defaultPermissionConfig(roleType));
+            }
         }
         userMapper.updateById(user);
         return Result.success("审核操作成功");
@@ -151,8 +190,55 @@ public class UserController {
         }
 
         user.setRoleType(roleType);
+        if (user.getPermissionConfig() == null || user.getPermissionConfig().isBlank()) {
+            user.setPermissionConfig(defaultPermissionConfig(roleType));
+        }
         userMapper.updateById(user);
         return Result.success("角色分配成功");
+    }
+
+    @GetMapping("/permissions/{userId}")
+    public Result<?> getPermissions(HttpServletRequest request, @PathVariable Integer userId) {
+        authSupport.requireRole(request, 2);
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return Result.error("用户不存在");
+        }
+        Map<String, Object> data = new HashMap<>();
+        data.put("userId", user.getId());
+        data.put("username", user.getUsername());
+        data.put("permissionConfig", user.getPermissionConfig() == null || user.getPermissionConfig().isBlank()
+                ? defaultPermissionConfig(user.getRoleType())
+                : user.getPermissionConfig());
+        return Result.success(data);
+    }
+
+    @PostMapping("/permissions")
+    public Result<?> savePermissions(HttpServletRequest request, @RequestBody Map<String, Object> map) {
+        authSupport.requireRole(request, 2);
+        Integer userId = toInt(map.get("userId"));
+        String permissionConfig = map.get("permissionConfig") == null ? null : String.valueOf(map.get("permissionConfig"));
+        if (userId == null || permissionConfig == null || permissionConfig.isBlank()) {
+            return Result.error("参数错误");
+        }
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return Result.error("用户不存在");
+        }
+        user.setPermissionConfig(permissionConfig);
+        userMapper.updateById(user);
+        return Result.success("权限配置保存成功");
+    }
+
+    private String defaultPermissionConfig(Integer roleType) {
+        int role = roleType == null ? 0 : roleType;
+        if (role >= 2) {
+            return "{\"moduleView\":{\"dashboard\":true,\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"overview\":true,\"purchase\":true},\"moduleEdit\":{\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"purchase\":true},\"amountView\":{\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"overview\":true}}";
+        }
+        if (role == 1) {
+            return "{\"moduleView\":{\"dashboard\":true,\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"overview\":true,\"purchase\":true},\"moduleEdit\":{\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"purchase\":true},\"amountView\":{\"basicInfo\":false,\"inbound\":false,\"outbound\":false,\"inventory\":false,\"overview\":false}}";
+        }
+        return "{\"moduleView\":{\"dashboard\":true,\"basicInfo\":true,\"inbound\":true,\"outbound\":true,\"inventory\":true,\"overview\":true,\"purchase\":true},\"moduleEdit\":{\"basicInfo\":false,\"inbound\":false,\"outbound\":false,\"inventory\":false,\"purchase\":false},\"amountView\":{\"basicInfo\":false,\"inbound\":false,\"outbound\":false,\"inventory\":false,\"overview\":false}}";
     }
 
     private Integer toInt(Object value) {

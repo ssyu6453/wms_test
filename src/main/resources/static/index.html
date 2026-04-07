@@ -68,9 +68,8 @@
                 axios.post(url, form).then(res => {
                     const data = res.data;
                     if (data.code === 200) {
-                        ElMessage.success(isLogin.value ? '登录成功！(此为演示效果)' : '注册成功，请等待管理员审核！');
+                        ElMessage.success(isLogin.value ? '登录成功！' : '注册成功，请等待管理员审核！');
                         if (isLogin.value) {
-                            ElMessage.success('登录成功！即将跳转...');
                             // 存储用户信息并跳转到主页
                             localStorage.setItem('wms_user', JSON.stringify(data.data));
                             setTimeout(() => {
