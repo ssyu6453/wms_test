@@ -59,14 +59,20 @@ public class UserController {
         Cookie cookie = new Cookie("wms_user_id", String.valueOf(user.getId()));
         cookie.setPath("/");
         cookie.setHttpOnly(true);
-        cookie.setMaxAge(7 * 24 * 60 * 60);
+        cookie.setMaxAge(-1);
         response.addCookie(cookie);
+        authSupport.registerLogin(user.getId());
 
         return Result.success(user);
     }
 
     @PostMapping("/logout")
-    public Result<?> logout(HttpServletResponse response) {
+    public Result<?> logout(HttpServletRequest request, HttpServletResponse response) {
+        try {
+            User user = authSupport.requireLogin(request);
+            authSupport.clearLogin(user.getId());
+        } catch (Exception ignored) {
+        }
         Cookie cookie = new Cookie("wms_user_id", "");
         cookie.setPath("/");
         cookie.setHttpOnly(true);

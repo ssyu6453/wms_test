@@ -113,13 +113,23 @@ CREATE TABLE `t_outbound` (
 CREATE TABLE `t_purchase` (
   `id` INT NOT NULL AUTO_INCREMENT COMMENT '序号',
   `purchase_date` DATE NOT NULL COMMENT '采购日期',
-  `product_name` VARCHAR(100) NOT NULL COMMENT '品名',
+  `product_name` VARCHAR(100) NOT NULL COMMENT '采购物品/物品名称',
   `price` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '价格',
   `specification` VARCHAR(100) DEFAULT NULL COMMENT '规格型号',
-  `supplier` VARCHAR(100) DEFAULT NULL COMMENT '供应商',
+  `counterparty_unit` VARCHAR(100) DEFAULT NULL COMMENT '对方单位',
   `unit` VARCHAR(20) DEFAULT NULL COMMENT '单位',
   `purchase_qty` INT NOT NULL DEFAULT 0 COMMENT '采购数量',
-  `purchase_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '采购金额',
+  `purchase_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '合计采购金额',
+  `is_invoiced` TINYINT NOT NULL DEFAULT 0 COMMENT '是否开票: 0=否,1=是',
+  `invoice_no` VARCHAR(100) DEFAULT NULL COMMENT '发票号码(已开票时必填)',
+  `paid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '已付金额',
+  `unpaid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '未付金额',
+  `purpose` VARCHAR(200) DEFAULT NULL COMMENT '用途',
+  `payment_date` DATE DEFAULT NULL COMMENT '付款日期',
+  `inbound_date` DATE DEFAULT NULL COMMENT '入库日期',
+  `register_remark` VARCHAR(255) DEFAULT NULL COMMENT '采购登记备注',
+  `traffic_fee` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '交通费用',
+  `total_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '总金额=合计采购金额+交通费用',
   `inventory_id` INT DEFAULT NULL COMMENT '关联库存ID',
   `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/RECEIVED/CANCELED',
   `operator` VARCHAR(50) DEFAULT NULL COMMENT '操作人',
@@ -128,7 +138,8 @@ CREATE TABLE `t_purchase` (
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_purchase_date` (`purchase_date`),
-  KEY `idx_purchase_supplier` (`supplier`),
+  KEY `idx_purchase_counterparty` (`counterparty_unit`),
+  KEY `idx_purchase_invoice_no` (`invoice_no`),
   KEY `idx_purchase_status` (`status`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='采购记录表';
 
@@ -220,24 +231,66 @@ FROM t_inventory;
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `production_date` VARCHAR(50) DEFAULT NULL COMMENT '生产日期(支持年月格式如2024.03)';
 -- ALTER TABLE `t_inbound` MODIFY COLUMN `valid_date` VARCHAR(50) DEFAULT NULL COMMENT '有效期(支持年月格式)';
 -- ALTER TABLE `t_user` ADD COLUMN `permission_config` TEXT NULL COMMENT '细分权限JSON';
--- CREATE TABLE `t_purchase` (
---   `id` INT NOT NULL AUTO_INCREMENT,
---   `purchase_date` DATE NOT NULL,
---   `product_name` VARCHAR(100) NOT NULL,
---   `price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
---   `specification` VARCHAR(100) DEFAULT NULL,
---   `supplier` VARCHAR(100) DEFAULT NULL,
---   `unit` VARCHAR(20) DEFAULT NULL,
---   `purchase_qty` INT NOT NULL DEFAULT 0,
---   `purchase_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00,
---   `inventory_id` INT DEFAULT NULL,
---   `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
---   `operator` VARCHAR(50) DEFAULT NULL,
---   `remark` VARCHAR(255) DEFAULT NULL,
---   `receive_time` DATETIME DEFAULT NULL,
---   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
---   PRIMARY KEY (`id`)
--- ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 已有 t_purchase 的增量升级（按需执行）
+-- ALTER TABLE `t_purchase` ADD COLUMN `counterparty_unit` VARCHAR(100) DEFAULT NULL COMMENT '对方单位' AFTER `specification`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `is_invoiced` TINYINT NOT NULL DEFAULT 0 COMMENT '是否开票: 0=否,1=是' AFTER `purchase_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `invoice_no` VARCHAR(100) DEFAULT NULL COMMENT '发票号码(已开票时必填)' AFTER `is_invoiced`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `paid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '已付金额' AFTER `invoice_no`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `unpaid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '未付金额' AFTER `paid_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `purpose` VARCHAR(200) DEFAULT NULL COMMENT '用途' AFTER `unpaid_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `payment_date` DATE DEFAULT NULL COMMENT '付款日期' AFTER `purpose`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `inbound_date` DATE DEFAULT NULL COMMENT '入库日期' AFTER `payment_date`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `register_remark` VARCHAR(255) DEFAULT NULL COMMENT '采购登记备注' AFTER `inbound_date`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `traffic_fee` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '交通费用' AFTER `register_remark`;
+-- ALTER TABLE `t_purchase` ADD COLUMN `total_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '总金额=合计采购金额+交通费用' AFTER `traffic_fee`;
+-- UPDATE `t_purchase` SET `counterparty_unit` = COALESCE(`counterparty_unit`, `supplier`) WHERE `counterparty_unit` IS NULL OR `counterparty_unit` = '';
+-- UPDATE `t_purchase` SET `unpaid_amount` = GREATEST(`purchase_amount` - `paid_amount`, 0) WHERE `unpaid_amount` = 0;
+-- UPDATE `t_purchase` SET `total_amount` = `purchase_amount` + `traffic_fee` WHERE `total_amount` = 0;
+-- 如果旧库有发票号CHECK约束，先删除（约束名按实际为准）
+-- ALTER TABLE `t_purchase` DROP CHECK `ck_purchase_invoice_no`;
+-- ALTER TABLE `t_purchase` DROP CHECK `ck purchase invoice no`;
+
+-- ========================================
+-- 已执行过旧版 SQL 时，推荐执行以下幂等增量（MySQL 8.0+）
+-- ========================================
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `counterparty_unit` VARCHAR(100) DEFAULT NULL COMMENT '对方单位' AFTER `specification`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `is_invoiced` TINYINT NOT NULL DEFAULT 0 COMMENT '是否开票: 0=否,1=是' AFTER `purchase_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `invoice_no` VARCHAR(100) DEFAULT NULL COMMENT '发票号码(已开票时必填)' AFTER `is_invoiced`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `paid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '已付金额' AFTER `invoice_no`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `unpaid_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '未付金额' AFTER `paid_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `purpose` VARCHAR(200) DEFAULT NULL COMMENT '用途' AFTER `unpaid_amount`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `payment_date` DATE DEFAULT NULL COMMENT '付款日期' AFTER `purpose`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `inbound_date` DATE DEFAULT NULL COMMENT '入库日期' AFTER `payment_date`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `register_remark` VARCHAR(255) DEFAULT NULL COMMENT '采购登记备注' AFTER `inbound_date`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `traffic_fee` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '交通费用' AFTER `register_remark`;
+-- ALTER TABLE `t_purchase` ADD COLUMN IF NOT EXISTS `total_amount` DECIMAL(14,2) NOT NULL DEFAULT 0.00 COMMENT '总金额=合计采购金额+交通费用' AFTER `traffic_fee`;
+-- ALTER TABLE `t_purchase` DROP COLUMN `supplier`;
+-- UPDATE `t_purchase` SET `unpaid_amount` = GREATEST(`purchase_amount` - `paid_amount`, 0);
+-- UPDATE `t_purchase` SET `total_amount` = `purchase_amount` + `traffic_fee`;
+-- ALTER TABLE `t_purchase` DROP CHECK `ck_purchase_invoice_no`;
+-- ALTER TABLE `t_purchase` DROP CHECK `ck purchase invoice no`;
+-- ALTER TABLE `t_purchase` DROP COLUMN `purchaser`;
+-- ALTER TABLE `t_purchase` DROP COLUMN `our_unit`;
+
+-- ========================================
+-- 模板配置持久化表（防止模板重置）
+-- ========================================
+DROP TABLE IF EXISTS `t_template_profile`;
+CREATE TABLE `t_template_profile` (
+  `id` INT NOT NULL AUTO_INCREMENT COMMENT '模板配置ID',
+  `template_type` VARCHAR(20) NOT NULL COMMENT '模板类型: inbound/outbound/purchase',
+  `title` VARCHAR(50) DEFAULT NULL COMMENT '模板标题',
+  `prefix` VARCHAR(10) DEFAULT '' COMMENT '单据前缀',
+  `date_format` VARCHAR(20) DEFAULT 'YYYYMMDD' COMMENT '日期格式',
+  `seq_length` INT DEFAULT 2 COMMENT '流水号位数',
+  `company_name` VARCHAR(100) DEFAULT '' COMMENT '公司名称',
+  `field_config` JSON COMMENT '字段配置JSON',
+  `footer_config` JSON COMMENT '页脚配置JSON',
+  `updated_by` VARCHAR(50) DEFAULT NULL COMMENT '更新人',
+  `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_template_type` (`template_type`)
+) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT='模板配置持久化表';
 
 -- ========================================
 -- 8) 单据模板表
@@ -275,6 +328,13 @@ INSERT INTO `t_doc_template` (`template_type`, `template_name`, `prefix`, `date_
 VALUES ('outbound', '默认出库单模板', 'CK', 'YYYYMMDD', 4, '出库单', '', 'standard',
 '[{"key":"id","label":"序号","checked":true,"order":1},{"key":"productName","label":"品名","checked":true,"order":2},{"key":"specification","label":"规格型号","checked":true,"order":3},{"key":"unit","label":"单位","checked":true,"order":4},{"key":"outboundQty","label":"数量","checked":true,"order":5},{"key":"price","label":"单价","checked":true,"order":6},{"key":"outboundAmount","label":"金额","checked":true,"order":7},{"key":"purpose","label":"用途","checked":true,"order":8},{"key":"supplier","label":"供应商","checked":false,"order":9},{"key":"remark","label":"备注","checked":false,"order":10}]',
 '{"handlerLabel":"经办人","receiverLabel":"领用人","remarkLabel":"备注"}',
+1, 'system');
+
+-- 插入默认采购申请表模板
+INSERT INTO `t_doc_template` (`template_type`, `template_name`, `prefix`, `date_format`, `seq_length`, `title`, `company_name`, `layout_type`, `field_config`, `footer_config`, `is_default`, `create_by`)
+VALUES ('purchase', '默认采购申请表模板', 'CG', 'YYYYMMDD', 4, '采购申请表', '', 'standard',
+'[{"key":"id","label":"序号","checked":true,"order":1},{"key":"productName","label":"物品名称","checked":true,"order":2},{"key":"specification","label":"规格型号","checked":true,"order":3},{"key":"unit","label":"单位","checked":true,"order":4},{"key":"purchaseQty","label":"采购数量","checked":true,"order":5},{"key":"price","label":"单价","checked":true,"order":6},{"key":"purchaseAmount","label":"合计金额","checked":true,"order":7},{"key":"purpose","label":"用途","checked":true,"order":8},{"key":"counterpartyUnit","label":"对方单位","checked":true,"order":9}]',
+'{"applicantLabel":"申请人","approverLabel":"审批人","trafficFeeLabel":"交通费用","totalAmountLabel":"总金额"}',
 1, 'system');
 
 -- ========================================

@@ -55,10 +55,21 @@ public class PurchaseController {
             row.put("productName", purchase.getProductName());
             row.put("price", safe(purchase.getPrice()));
             row.put("specification", purchase.getSpecification());
-            row.put("supplier", purchase.getSupplier());
+            row.put("counterpartyUnit", purchase.getCounterpartyUnit());
             row.put("unit", purchase.getUnit());
             row.put("purchaseQty", defaultInt(purchase.getPurchaseQty()));
             row.put("purchaseAmount", safe(purchase.getPurchaseAmount()));
+            row.put("isInvoiced", defaultInt(purchase.getIsInvoiced()));
+            row.put("invoiceNo", purchase.getInvoiceNo());
+            row.put("paidAmount", safe(purchase.getPaidAmount()));
+            row.put("unpaidAmount", safe(purchase.getUnpaidAmount()));
+            row.put("purpose", purchase.getPurpose());
+            row.put("purchaser", purchase.getOperator());
+            row.put("paymentDate", purchase.getPaymentDate());
+            row.put("inboundDate", purchase.getInboundDate());
+            row.put("registerRemark", purchase.getRegisterRemark());
+            row.put("trafficFee", safe(purchase.getTrafficFee()));
+            row.put("totalAmount", safe(purchase.getTotalAmount()));
             row.put("status", purchase.getStatus());
             row.put("operator", purchase.getOperator());
             row.put("remark", purchase.getRemark());
@@ -84,8 +95,9 @@ public class PurchaseController {
         if (purchase.getProductName() == null || purchase.getProductName().isBlank()) {
             return Result.error("品名不能为空");
         }
-        if (purchase.getSupplier() == null || purchase.getSupplier().isBlank()) {
-            return Result.error("供应商不能为空");
+        normalizeCounterpartyFields(purchase);
+        if (purchase.getCounterpartyUnit() == null || purchase.getCounterpartyUnit().isBlank()) {
+            return Result.error("对方单位不能为空");
         }
 
         Inventory inventory = resolveInventory(purchase);
@@ -97,9 +109,14 @@ public class PurchaseController {
         purchase.setProductName(inventory.getProductName());
         purchase.setPrice(safe(inventory.getPrice()));
         purchase.setSpecification(inventory.getSpecification());
-        purchase.setSupplier(inventory.getSupplier());
+        if (purchase.getCounterpartyUnit() == null || purchase.getCounterpartyUnit().isBlank()) {
+            purchase.setCounterpartyUnit(inventory.getSupplier());
+        }
         purchase.setUnit(inventory.getUnit());
-        purchase.setPurchaseAmount(safe(inventory.getPrice()).multiply(BigDecimal.valueOf(defaultInt(purchase.getPurchaseQty()))).setScale(2, RoundingMode.HALF_UP));
+        if (purchase.getPrice() == null) {
+            purchase.setPrice(safe(inventory.getPrice()));
+        }
+        fillAmountFields(purchase);
         purchase.setStatus("PENDING");
         purchase.setOperator(user.getUsername());
         purchaseMapper.insert(purchase);
@@ -122,6 +139,11 @@ public class PurchaseController {
             return Result.error("已签收采购记录不允许修改");
         }
 
+        normalizeCounterpartyFields(purchase);
+        if (purchase.getCounterpartyUnit() == null || purchase.getCounterpartyUnit().isBlank()) {
+            return Result.error("对方单位不能为空");
+        }
+
         Inventory inventory = resolveInventory(purchase);
         if (inventory == null) {
             return Result.error("无法创建或匹配库存物品");
@@ -131,11 +153,17 @@ public class PurchaseController {
         purchase.setProductName(inventory.getProductName());
         purchase.setPrice(safe(inventory.getPrice()));
         purchase.setSpecification(inventory.getSpecification());
-        purchase.setSupplier(inventory.getSupplier());
+        if (purchase.getCounterpartyUnit() == null || purchase.getCounterpartyUnit().isBlank()) {
+            purchase.setCounterpartyUnit(inventory.getSupplier());
+        }
         purchase.setUnit(inventory.getUnit());
-        purchase.setPurchaseAmount(safe(inventory.getPrice()).multiply(BigDecimal.valueOf(defaultInt(purchase.getPurchaseQty()))).setScale(2, RoundingMode.HALF_UP));
+        if (purchase.getPrice() == null) {
+            purchase.setPrice(safe(inventory.getPrice()));
+        }
+        fillAmountFields(purchase);
         purchase.setStatus(old.getStatus());
         purchase.setOperator(user.getUsername());
+        purchase.setReceiveTime(old.getReceiveTime());
         purchaseMapper.updateById(purchase);
 
         addLog(user.getUsername(), "UPDATE", "purchase", "更新采购记录: " + purchase.getProductName() + " x" + purchase.getPurchaseQty(), purchase.getId());
@@ -199,6 +227,9 @@ public class PurchaseController {
 
         purchase.setStatus("RECEIVED");
         purchase.setReceiveTime(new Date());
+        if (purchase.getInboundDate() == null) {
+            purchase.setInboundDate(new Date());
+        }
         purchaseMapper.updateById(purchase);
 
         addLog(user.getUsername(), "UPDATE", "purchase", "采购签收并入库: " + purchase.getProductName() + " x" + purchase.getPurchaseQty(), purchase.getId());
@@ -230,7 +261,7 @@ public class PurchaseController {
         inventory.setProductName(purchase.getProductName());
         inventory.setPrice(safe(purchase.getPrice()));
         inventory.setSpecification(purchase.getSpecification());
-        inventory.setSupplier(purchase.getSupplier());
+        inventory.setSupplier(purchase.getCounterpartyUnit());
         inventory.setUnit(purchase.getUnit());
         inventory.setInitStockQty(0);
         inventory.setCurrentStockQty(0);
@@ -247,6 +278,31 @@ public class PurchaseController {
 
     private int defaultInt(Integer value) {
         return value == null ? 0 : value;
+    }
+
+    private void normalizeCounterpartyFields(Purchase purchase) {
+        if (purchase.getCounterpartyUnit() != null) {
+            purchase.setCounterpartyUnit(purchase.getCounterpartyUnit().trim());
+        }
+    }
+
+    private void fillAmountFields(Purchase purchase) {
+        BigDecimal price = safe(purchase.getPrice());
+        int qty = defaultInt(purchase.getPurchaseQty());
+        BigDecimal purchaseAmount = price.multiply(BigDecimal.valueOf(qty)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal paidAmount = safe(purchase.getPaidAmount());
+        BigDecimal trafficFee = safe(purchase.getTrafficFee());
+        BigDecimal unpaidAmount = purchaseAmount.subtract(paidAmount);
+        if (unpaidAmount.compareTo(BigDecimal.ZERO) < 0) {
+            unpaidAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        BigDecimal totalAmount = purchaseAmount.add(trafficFee).setScale(2, RoundingMode.HALF_UP);
+
+        purchase.setPurchaseAmount(purchaseAmount);
+        purchase.setPaidAmount(paidAmount);
+        purchase.setUnpaidAmount(unpaidAmount);
+        purchase.setTrafficFee(trafficFee);
+        purchase.setTotalAmount(totalAmount);
     }
 
     private void addLog(String operator, String opType, String module, String description, Integer targetId) {

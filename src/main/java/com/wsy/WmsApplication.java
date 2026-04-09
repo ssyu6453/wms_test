@@ -29,6 +29,7 @@ public class WmsApplication implements CommandLineRunner {
     public void run(String... args) throws Exception {
         ensureUserPermissionColumn();
         ensureDocRecordTable();
+        ensureTemplateProfileTable();
 
         // 自动检查并修复 admin 账号，确保初始密码一定能够登录
         QueryWrapper<User> queryWrapper = new QueryWrapper<>();
@@ -91,6 +92,31 @@ public class WmsApplication implements CommandLineRunner {
                     "KEY idx_doc_record_created_at (created_at)" +
                     ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='单据记录表'");
             System.out.println("====== 已自动创建 t_doc_record 表 ======");
+        }
+    }
+
+    private void ensureTemplateProfileTable() {
+        Integer exists = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 't_template_profile'",
+                Integer.class
+        );
+        if (exists == null || exists == 0) {
+            jdbcTemplate.execute("CREATE TABLE t_template_profile (" +
+                    "id INT NOT NULL AUTO_INCREMENT COMMENT '模板配置ID'," +
+                    "template_type VARCHAR(20) NOT NULL COMMENT '模板类型: inbound/outbound/purchase'," +
+                    "title VARCHAR(50) DEFAULT NULL COMMENT '模板标题'," +
+                    "prefix VARCHAR(10) DEFAULT '' COMMENT '单据前缀'," +
+                    "date_format VARCHAR(20) DEFAULT 'YYYYMMDD' COMMENT '日期格式'," +
+                    "seq_length INT DEFAULT 2 COMMENT '流水号位数'," +
+                    "company_name VARCHAR(100) DEFAULT '' COMMENT '公司名称'," +
+                    "field_config JSON COMMENT '字段配置JSON'," +
+                    "footer_config JSON COMMENT '页脚配置JSON'," +
+                    "updated_by VARCHAR(50) DEFAULT NULL COMMENT '更新人'," +
+                    "update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'," +
+                    "PRIMARY KEY (id)," +
+                    "UNIQUE KEY uk_template_type (template_type)" +
+                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模板配置持久化表'");
+            System.out.println("====== 已自动创建 t_template_profile 表 ======");
         }
     }
 

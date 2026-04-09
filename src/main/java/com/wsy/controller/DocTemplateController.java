@@ -6,9 +6,11 @@ import com.wsy.common.AuthSupport;
 import com.wsy.common.Result;
 import com.wsy.entity.DocTemplate;
 import com.wsy.entity.OperationLog;
+import com.wsy.entity.TemplateProfile;
 import com.wsy.entity.User;
 import com.wsy.mapper.DocTemplateMapper;
 import com.wsy.mapper.OperationLogMapper;
+import com.wsy.mapper.TemplateProfileMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +27,9 @@ public class DocTemplateController {
 
     @Autowired
     private OperationLogMapper logMapper;
+
+    @Autowired
+    private TemplateProfileMapper templateProfileMapper;
 
     @Autowired
     private AuthSupport authSupport;
@@ -54,6 +59,29 @@ public class DocTemplateController {
     @GetMapping("/default")
     public Result<?> getDefault(HttpServletRequest request, @RequestParam String type) {
         authSupport.requireLogin(request);
+
+        QueryWrapper<TemplateProfile> profileWrapper = new QueryWrapper<>();
+        profileWrapper.eq("template_type", type).last("LIMIT 1");
+        TemplateProfile profile = templateProfileMapper.selectOne(profileWrapper);
+        if (profile != null) {
+            DocTemplate data = new DocTemplate();
+            data.setId(profile.getId());
+            data.setTemplateType(profile.getTemplateType());
+            data.setTemplateName((profile.getTitle() == null || profile.getTitle().isBlank()) ? "默认模板" : profile.getTitle());
+            data.setPrefix(profile.getPrefix());
+            data.setDateFormat(profile.getDateFormat());
+            data.setSeqLength(profile.getSeqLength());
+            data.setTitle(profile.getTitle());
+            data.setCompanyName(profile.getCompanyName());
+            data.setLayoutType("standard");
+            data.setFieldConfig(profile.getFieldConfig());
+            data.setFooterConfig(profile.getFooterConfig());
+            data.setIsDefault(1);
+            data.setCreateBy(profile.getUpdatedBy());
+            data.setUpdateTime(profile.getUpdateTime());
+            return Result.success(data);
+        }
+
         QueryWrapper<DocTemplate> wrapper = new QueryWrapper<>();
         wrapper.eq("template_type", type).eq("is_default", 1);
         DocTemplate template = templateMapper.selectOne(wrapper);
@@ -80,6 +108,28 @@ public class DocTemplateController {
         } else {
             templateMapper.updateById(template);
             addLog(user.getUsername(), "UPDATE", "template", "更新模板: " + template.getTemplateName(), template.getId());
+        }
+
+        QueryWrapper<TemplateProfile> profileWrapper = new QueryWrapper<>();
+        profileWrapper.eq("template_type", template.getTemplateType()).last("LIMIT 1");
+        TemplateProfile profile = templateProfileMapper.selectOne(profileWrapper);
+        if (profile == null) {
+            profile = new TemplateProfile();
+            profile.setTemplateType(template.getTemplateType());
+        }
+        profile.setTitle(template.getTitle());
+        profile.setPrefix(template.getPrefix());
+        profile.setDateFormat(template.getDateFormat());
+        profile.setSeqLength(template.getSeqLength());
+        profile.setCompanyName(template.getCompanyName());
+        profile.setFieldConfig(template.getFieldConfig());
+        profile.setFooterConfig(template.getFooterConfig());
+        profile.setUpdatedBy(user.getUsername());
+        profile.setUpdateTime(new Date());
+        if (profile.getId() == null) {
+            templateProfileMapper.insert(profile);
+        } else {
+            templateProfileMapper.updateById(profile);
         }
 
         return Result.success(isNew ? "模板创建成功" : "模板更新成功");

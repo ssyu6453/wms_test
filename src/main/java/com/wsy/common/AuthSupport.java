@@ -7,11 +7,42 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Component
 public class AuthSupport {
 
+    private static final long SESSION_TIMEOUT_MS = 30L * 60L * 1000L;
+    private static final Map<Integer, Long> LOGIN_SESSION = new ConcurrentHashMap<>();
+
     @Autowired
     private UserMapper userMapper;
+
+    public void registerLogin(Integer userId) {
+        if (userId != null) {
+            LOGIN_SESSION.put(userId, System.currentTimeMillis());
+        }
+    }
+
+    public void clearLogin(Integer userId) {
+        if (userId != null) {
+            LOGIN_SESSION.remove(userId);
+        }
+    }
+
+    private void ensureActiveSession(Integer userId) {
+        Long lastSeen = LOGIN_SESSION.get(userId);
+        long now = System.currentTimeMillis();
+        if (lastSeen == null) {
+            throw new RuntimeException("登录已失效，请重新登录");
+        }
+        if (now - lastSeen > SESSION_TIMEOUT_MS) {
+            LOGIN_SESSION.remove(userId);
+            throw new RuntimeException("登录超时，请重新登录");
+        }
+        LOGIN_SESSION.put(userId, now);
+    }
 
     public User requireLogin(HttpServletRequest request) {
         String userIdStr = request.getHeader("X-User-Id");
@@ -35,6 +66,8 @@ public class AuthSupport {
         } catch (NumberFormatException e) {
             throw new RuntimeException("登录信息无效");
         }
+
+        ensureActiveSession(userId);
 
         User user = userMapper.selectById(userId);
         if (user == null || user.getStatus() == null || user.getStatus() != 1) {
